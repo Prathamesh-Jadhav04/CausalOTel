@@ -1,0 +1,23 @@
+{
+  "name": "causalotel-analysis-engine",
+  "version": "1.0.0",
+  "description": "Root Cause Analysis (RCA) Engine & Graph Correlation Service",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node --import ./src/tracer.js src/server.js",
+    "dev": "node --watch --import ./src/tracer.js src/server.js",
+    "test": "node --test test/**/*.test.js"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.56.0",
+    "@opentelemetry/exporter-metrics-otlp-proto": "^0.57.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.57.0",
+    "@opentelemetry/sdk-node": "^0.57.0",
+    "dotenv": "^16.4.7",
+    "express": "^5.0.0",
+    "mongoose": "^8.10.0",
+    "prom-client": "^15.1.3"
+  }
+}
