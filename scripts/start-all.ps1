@@ -81,7 +81,7 @@ Start-BackgroundService -Name "order-service" `
 
 # 5. Inventory Service (.NET 10, port 5050)
 Start-BackgroundService -Name "inventory-service" `
-    -Directory (Join-Path $root "services\inventory-service\InventoryService.Api") `
+    -Directory (Join-Path $root "services\inventory-service") `
     -Command "dotnet" -Arguments "run --urls http://localhost:5050" `
     -Port 5050
 

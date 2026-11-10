@@ -84,7 +84,7 @@ try {
 } catch {
     $checkoutFailedAsExpected = $true
     Write-Host "    [EXPECTED FAILURE] HTTP 504 Gateway Timeout received from Payment Gateway!" -ForegroundColor Green
-    Write-Host "    Saga Orchestrator initiated automated compensation (Stock released in inventory)." -ForegroundColor Cyan
+    Write-Host "    Saga Orchestrator entered PENDING_RECONCILIATION; inventory reservation preserved for reconciliation." -ForegroundColor Cyan
 }
 
 # --- SCENARIO 4: QUERY AUTOMATED RCA ENGINE ---
@@ -109,7 +109,7 @@ Write-Host "Incident Summary:   $summary" -ForegroundColor White
 Write-Host "`nAlgorithmic Evidence Chain:" -ForegroundColor Cyan
 Write-Host "  1. [Sweep-Line Interval Union]: Net exclusive self-time of 3,250ms on 'POST /api/payments/charge' span." -ForegroundColor Gray
 Write-Host "  2. [HTTP Status Code]: HTTP 504 Gateway Timeout detected." -ForegroundColor Gray
-Write-Host "  3. [Cascaded Blast Radius]: Upstream order-service experienced cascaded timeout; saga compensation executed." -ForegroundColor Gray
+Write-Host "  3. [Cascaded Blast Radius]: Upstream order-service experienced cascaded timeout; safe reconciliation state and reservation preservation engaged." -ForegroundColor Gray
 Write-Host "  4. [Tarjan SCC DAG Verification]: Causal execution path is verified acyclic (No circular dependency)." -ForegroundColor Gray
 Write-Host "====================================================" -ForegroundColor Magenta
 
