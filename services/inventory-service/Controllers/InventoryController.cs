@@ -147,8 +147,12 @@ public class InventoryController : ControllerBase
                     });
                 }
 
-                var stock = await _context.StockItems.FirstOrDefaultAsync(s => s.Sku == item.Sku);
-                if (stock == null || stock.AvailableQuantity < item.Quantity)
+                // Atomic conditional decrement in SQL - guarantees concurrency safety
+                int rows = await _context.Database.ExecuteSqlRawAsync(
+                    "UPDATE stock_items SET AvailableQuantity = AvailableQuantity - {0}, ReservedQuantity = ReservedQuantity + {0}, UpdatedAt = {1} WHERE Sku = {2} AND AvailableQuantity >= {0}",
+                    item.Quantity, now, item.Sku);
+
+                if (rows == 0)
                 {
                     await transaction.RollbackAsync();
                     return Conflict(new ProblemDetails
@@ -159,10 +163,6 @@ public class InventoryController : ControllerBase
                         Detail = $"Insufficient inventory available for SKU: {item.Sku}"
                     });
                 }
-
-                stock.AvailableQuantity -= item.Quantity;
-                stock.ReservedQuantity += item.Quantity;
-                stock.UpdatedAt = now;
 
                 var reservation = new StockReservation
                 {
@@ -237,16 +237,66 @@ public class InventoryController : ControllerBase
             return Ok(new { status = "COMMITTED", orderId = request.OrderId, idempotent = true });
         }
 
-        // Check if any are EXPIRED or RELEASED
-        if (reservations.Any(r => r.Status == "EXPIRED" || r.Status == "RELEASED"))
+        // Check if already RELEASED
+        if (reservations.Any(r => r.Status == "RELEASED"))
         {
             return Conflict(new ProblemDetails
             {
                 Type = "https://causalotel.io/errors/409",
                 Title = "Reservation Not Active",
                 Status = 409,
-                Detail = $"Reservation for orderId {request.OrderId} has already expired or been released"
+                Detail = $"Reservation for orderId {request.OrderId} has already been released"
             });
+        }
+
+        // If EXPIRED, coordinate recovery with current stock state
+        if (reservations.Any(r => r.Status == "EXPIRED"))
+        {
+            using var recoverTx = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                bool canRecover = true;
+                foreach (var res in reservations.Where(r => r.Status == "EXPIRED"))
+                {
+                    int rows = await _context.Database.ExecuteSqlRawAsync(
+                        "UPDATE stock_items SET AvailableQuantity = AvailableQuantity - {0}, UpdatedAt = {1} WHERE Sku = {2} AND AvailableQuantity >= {0}",
+                        res.Quantity, now, res.Sku);
+                    if (rows == 0)
+                    {
+                        canRecover = false;
+                        break;
+                    }
+                }
+
+                if (canRecover)
+                {
+                    foreach (var res in reservations)
+                    {
+                        res.Status = "COMMITTED";
+                        res.UpdatedAt = now;
+                    }
+                    await _context.SaveChangesAsync();
+                    await recoverTx.CommitAsync();
+                    _logger.LogInformation("Recovered and committed expired reservation for orderId {OrderId}", request.OrderId);
+                    return Ok(new { status = "COMMITTED", orderId = request.OrderId, recovered = true });
+                }
+                else
+                {
+                    await recoverTx.RollbackAsync();
+                    return Conflict(new ProblemDetails
+                    {
+                        Type = "https://causalotel.io/errors/409",
+                        Title = "Reservation Expired",
+                        Status = 409,
+                        Detail = $"Reservation for orderId {request.OrderId} has expired and stock is no longer available"
+                    });
+                }
+            }
+            catch (Exception)
+            {
+                await recoverTx.RollbackAsync();
+                throw;
+            }
         }
 
         using var transaction = await _context.Database.BeginTransactionAsync();

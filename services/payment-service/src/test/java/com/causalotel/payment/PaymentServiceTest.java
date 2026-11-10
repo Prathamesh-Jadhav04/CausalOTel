@@ -14,12 +14,15 @@ import org.springframework.web.server.ResponseStatusException;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -217,5 +220,89 @@ class PaymentServiceTest {
         assertThrows(PaymentGatewaySimulator.GatewayTimeoutException.class, () ->
                 paymentController.charge(req)
         );
+    }
+
+    @Test
+    @DisplayName("GET /api/payments/order/{orderId} returns payment record for reconciliation")
+    void testPaymentLookupByOrderId() throws Exception {
+        String orderId = "ORD-LOOKUP-" + UUID.randomUUID();
+        PaymentController.ChargeRequest req = new PaymentController.ChargeRequest(orderId, 12500, "USD", "IDEM-LOOKUP-" + UUID.randomUUID());
+        ResponseEntity<Map<String, Object>> chargeResp = paymentController.charge(req);
+        assertEquals(HttpStatus.OK, chargeResp.getStatusCode());
+
+        ResponseEntity<Map<String, Object>> lookupResp = paymentController.getPaymentByOrderId(orderId);
+        assertEquals(HttpStatus.OK, lookupResp.getStatusCode());
+        assertNotNull(lookupResp.getBody());
+        assertEquals(orderId, lookupResp.getBody().get("orderId"));
+        assertEquals("CAPTURED", lookupResp.getBody().get("status"));
+        assertEquals(12500, lookupResp.getBody().get("amountCents"));
+    }
+
+    @Test
+    @DisplayName("Scenario 10: Two refund requests arrive simultaneously -> Total refunded never exceeds captured amount")
+    void testScenario10_TwoRefundRequestsArriveSimultaneously() throws Exception {
+        String orderId = "ORD-CONC-REF-" + UUID.randomUUID();
+        int capturedCents = 10000; // $100.00
+
+        // Charge $100
+        PaymentController.ChargeRequest chargeReq = new PaymentController.ChargeRequest(
+                orderId, capturedCents, "USD", "IDEM-CONC-CHARGE-" + UUID.randomUUID()
+        );
+        ResponseEntity<Map<String, Object>> chargeResp = paymentController.charge(chargeReq);
+        assertEquals(HttpStatus.OK, chargeResp.getStatusCode());
+        String paymentId = (String) chargeResp.getBody().get("paymentId");
+        assertNotNull(paymentId);
+
+        // Prepare 2 genuinely concurrent refund requests of 6000 cents ($60) each
+        // If both succeeded, $120 would be refunded on a $100 payment!
+        int refundAttemptCents = 6000;
+        int numThreads = 2;
+        ExecutorService executor = Executors.newFixedThreadPool(numThreads);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch doneLatch = new CountDownLatch(numThreads);
+
+        List<Future<Integer>> futures = new ArrayList<>();
+        for (int i = 0; i < numThreads; i++) {
+            final int index = i;
+            futures.add(executor.submit(() -> {
+                startLatch.await();
+                try {
+                    PaymentController.RefundRequest refundReq = new PaymentController.RefundRequest(
+                            paymentId, refundAttemptCents, "Simultaneous refund attempt " + index, "IDEM-SIM-REF-" + index + "-" + UUID.randomUUID()
+                    );
+                    ResponseEntity<Map<String, Object>> refResp = paymentController.refund(refundReq);
+                    return refResp.getStatusCode().value();
+                } catch (ResponseStatusException rse) {
+                    return rse.getStatusCode().value();
+                } finally {
+                    doneLatch.countDown();
+                }
+            }));
+        }
+
+        startLatch.countDown();
+        assertTrue(doneLatch.await(10, TimeUnit.SECONDS), "Concurrent refund requests must complete");
+        executor.shutdown();
+
+        int status1 = futures.get(0).get();
+        int status2 = futures.get(1).get();
+
+        // Exactly one should succeed (200 OK) and one must be rejected (422 Unprocessable Entity)
+        assertTrue(
+                (status1 == 200 && status2 == 422) || (status1 == 422 && status2 == 200),
+                "Exactly one concurrent refund should succeed (200) and one must fail (422). Got: " + status1 + " and " + status2
+        );
+
+        // Verify total refunded amount in database
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement("SELECT refunded_amount_cents, status FROM payments WHERE payment_id = ?")) {
+            ps.setString(1, paymentId);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next());
+                int refunded = rs.getInt("refunded_amount_cents");
+                assertEquals(6000, refunded, "Total refunded amount must be exactly 6000 cents, never 12000 cents");
+                assertEquals("PARTIALLY_REFUNDED", rs.getString("status"));
+            }
+        }
     }
 }

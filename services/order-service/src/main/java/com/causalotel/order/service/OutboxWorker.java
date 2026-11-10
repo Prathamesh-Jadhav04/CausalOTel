@@ -13,6 +13,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Component
@@ -23,12 +24,14 @@ public class OutboxWorker {
 
     private final DataSource dataSource;
     private final DownstreamServiceClient downstreamClient;
+    private final SagaOrchestrator sagaOrchestrator;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final String workerId = "worker-" + UUID.randomUUID().toString().substring(0, 8);
 
-    public OutboxWorker(DataSource dataSource, DownstreamServiceClient downstreamClient) {
+    public OutboxWorker(DataSource dataSource, DownstreamServiceClient downstreamClient, SagaOrchestrator sagaOrchestrator) {
         this.dataSource = dataSource;
         this.downstreamClient = downstreamClient;
+        this.sagaOrchestrator = sagaOrchestrator;
     }
 
     @Scheduled(fixedDelay = 5000)
@@ -105,6 +108,47 @@ public class OutboxWorker {
                     String idemKey = "outbox-ref-" + taskId;
                     downstreamClient.refundPayment(paymentId, amountCents, "Outbox recovery refund", idemKey);
                     success = true;
+                } else if ("COMMIT_INVENTORY".equals(taskType)) {
+                    String orderId = (String) payload.get("orderId");
+                    String sagaId = (String) payload.get("sagaId");
+                    downstreamClient.commitInventory(orderId);
+                    if (sagaId != null) {
+                        sagaOrchestrator.updateSagaState(sagaId, "COMPLETED", null);
+                    }
+                    sagaOrchestrator.updateOrderStatus(orderId, "CONFIRMED");
+                    success = true;
+                } else if ("RECONCILE_PAYMENT".equals(taskType)) {
+                    String orderId = (String) payload.get("orderId");
+                    String sagaId = (String) payload.get("sagaId");
+                    Optional<Map<String, Object>> payOpt = downstreamClient.getPaymentByOrderId(orderId);
+                    if (payOpt.isPresent()) {
+                        Map<String, Object> payRecord = payOpt.get();
+                        if ("CAPTURED".equalsIgnoreCase((String) payRecord.get("status"))) {
+                            // Payment captured: commit inventory and confirm order
+                            downstreamClient.commitInventory(orderId);
+                            if (sagaId != null) {
+                                sagaOrchestrator.updateSagaState(sagaId, "COMPLETED", null);
+                            }
+                            sagaOrchestrator.updateOrderStatus(orderId, "CONFIRMED");
+                            log.info("Reconciled outbox task {}: payment confirmed, order {} CONFIRMED", taskId, orderId);
+                            success = true;
+                        } else if ("DECLINED".equalsIgnoreCase((String) payRecord.get("status")) || "FAILED".equalsIgnoreCase((String) payRecord.get("status"))) {
+                            // Payment definitively declined: release inventory and cancel order
+                            downstreamClient.releaseInventory(orderId, "Outbox reconciliation: payment was not captured");
+                            if (sagaId != null) {
+                                sagaOrchestrator.updateSagaState(sagaId, "FAILED", "Payment declined upon reconciliation");
+                            }
+                            sagaOrchestrator.updateOrderStatus(orderId, "CANCELLED");
+                            log.info("Reconciled outbox task {}: payment declined, order {} CANCELLED", taskId, orderId);
+                            success = true;
+                        } else {
+                            log.warn("Payment reconciliation for order {} still unresolved, will retry", orderId);
+                            success = false;
+                        }
+                    } else {
+                        log.warn("Payment reconciliation for order {} not found yet, will retry", orderId);
+                        success = false;
+                    }
                 }
             } catch (Exception ex) {
                 log.error("Outbox task {} execution failed: {}", taskId, ex.getMessage());
@@ -141,6 +185,59 @@ public class OutboxWorker {
             }
         } catch (Exception e) {
             log.error("Error in outbox processing cycle", e);
+        }
+    }
+
+    @Scheduled(fixedDelay = 5000)
+    public void recoverStaleSagas() {
+        long staleThreshold = System.currentTimeMillis() - 5000;
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT id, order_id, current_state FROM saga_instances " +
+                     "WHERE current_state IN ('PAYMENT_CONFIRMED', 'INVENTORY_COMMITTING', 'RECONCILIATION_REQUIRED', 'COMPENSATING_INVENTORY', 'COMPENSATING_PAYMENT') " +
+                     "AND updated_at < ? LIMIT 10")) {
+            ps.setLong(1, staleThreshold);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String sagaId = rs.getString("id");
+                    String orderId = rs.getString("order_id");
+                    String state = rs.getString("current_state");
+                    log.info("Recovering stale saga {} for order {} in state {}", sagaId, orderId, state);
+
+                    try {
+                        if ("PAYMENT_CONFIRMED".equals(state) || "INVENTORY_COMMITTING".equals(state)) {
+                            downstreamClient.commitInventory(orderId);
+                            sagaOrchestrator.updateSagaState(sagaId, "COMPLETED", null);
+                            sagaOrchestrator.updateOrderStatus(orderId, "CONFIRMED");
+                            log.info("Stale saga {} successfully recovered to COMPLETED and order CONFIRMED", sagaId);
+                        } else if ("RECONCILIATION_REQUIRED".equals(state)) {
+                            Optional<Map<String, Object>> payOpt = downstreamClient.getPaymentByOrderId(orderId);
+                            if (payOpt.isPresent()) {
+                                Map<String, Object> payRecord = payOpt.get();
+                                if ("CAPTURED".equalsIgnoreCase((String) payRecord.get("status"))) {
+                                    downstreamClient.commitInventory(orderId);
+                                    sagaOrchestrator.updateSagaState(sagaId, "COMPLETED", null);
+                                    sagaOrchestrator.updateOrderStatus(orderId, "CONFIRMED");
+                                    log.info("Stale saga {} reconciled: payment was captured, order CONFIRMED", sagaId);
+                                } else if ("DECLINED".equalsIgnoreCase((String) payRecord.get("status")) || "FAILED".equalsIgnoreCase((String) payRecord.get("status"))) {
+                                    downstreamClient.releaseInventory(orderId, "Stale saga reconciliation: payment was not captured");
+                                    sagaOrchestrator.updateSagaState(sagaId, "FAILED", "Payment was not captured");
+                                    sagaOrchestrator.updateOrderStatus(orderId, "CANCELLED");
+                                    log.info("Stale saga {} reconciled: payment declined, order CANCELLED", sagaId);
+                                }
+                            }
+                        } else if ("COMPENSATING_INVENTORY".equals(state)) {
+                            downstreamClient.releaseInventory(orderId, "Stale saga recovery release");
+                            sagaOrchestrator.updateSagaState(sagaId, "FAILED", "Compensation completed");
+                            sagaOrchestrator.updateOrderStatus(orderId, "CANCELLED");
+                        }
+                    } catch (Exception ex) {
+                        log.warn("Recovery attempt for saga {} failed (will retry): {}", sagaId, ex.getMessage());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("Error in recoverStaleSagas cycle", e);
         }
     }
 }

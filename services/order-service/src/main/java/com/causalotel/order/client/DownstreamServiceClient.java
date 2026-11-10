@@ -124,4 +124,71 @@ public class DownstreamServiceClient {
                 .retrieve()
                 .body(Map.class);
     }
+
+    public java.util.Optional<Map<String, Object>> getPaymentByOrderId(String orderId) {
+        String url = paymentUrl + "/api/payments/order/" + orderId;
+        log.info("Querying Payment Service for orderId={}", orderId);
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> resp = restClient.get()
+                    .uri(url)
+                    .headers(h -> h.addAll(buildTracingHeaders()))
+                    .retrieve()
+                    .body(Map.class);
+            return java.util.Optional.ofNullable(resp);
+        } catch (org.springframework.web.client.HttpClientErrorException.NotFound e) {
+            return java.util.Optional.empty();
+        } catch (Exception e) {
+            log.warn("Failed to retrieve payment state for orderId={}: {}", orderId, e.getMessage());
+            throw e;
+        }
+    }
+
+    public static boolean isDefinitivePaymentDecline(Throwable t) {
+        if (t == null) return false;
+        if (t instanceof org.springframework.web.client.HttpClientErrorException.UnprocessableEntity) {
+            return true;
+        }
+        if (t instanceof org.springframework.web.client.HttpStatusCodeException statusEx) {
+            return statusEx.getStatusCode().value() == 422;
+        }
+        if (t instanceof org.springframework.web.server.ResponseStatusException rse) {
+            return rse.getStatusCode().value() == 422;
+        }
+        String msg = t.getMessage();
+        if (msg != null && (msg.contains("422") || msg.toLowerCase().contains("declined"))) {
+            return true;
+        }
+        if (t.getCause() != null && t.getCause() != t) {
+            return isDefinitivePaymentDecline(t.getCause());
+        }
+        return false;
+    }
+
+    public static boolean isUnknownPaymentOutcome(Throwable t) {
+        if (t == null) return false;
+        if (isDefinitivePaymentDecline(t)) return false;
+        if (t instanceof org.springframework.web.client.HttpServerErrorException.GatewayTimeout
+                || t instanceof org.springframework.web.client.HttpServerErrorException.ServiceUnavailable
+                || t instanceof org.springframework.web.client.ResourceAccessException
+                || t instanceof java.net.SocketTimeoutException) {
+            return true;
+        }
+        if (t instanceof org.springframework.web.client.HttpStatusCodeException statusEx) {
+            int code = statusEx.getStatusCode().value();
+            return code == 504 || code == 503 || code == 502 || code == 500;
+        }
+        if (t instanceof org.springframework.web.server.ResponseStatusException rse) {
+            int code = rse.getStatusCode().value();
+            return code == 504 || code == 503 || code == 502 || code == 500;
+        }
+        String msg = t.getMessage();
+        if (msg != null && (msg.contains("504") || msg.contains("503") || msg.contains("Timeout") || msg.contains("timeout"))) {
+            return true;
+        }
+        if (t.getCause() != null && t.getCause() != t) {
+            return isUnknownPaymentOutcome(t.getCause());
+        }
+        return true;
+    }
 }

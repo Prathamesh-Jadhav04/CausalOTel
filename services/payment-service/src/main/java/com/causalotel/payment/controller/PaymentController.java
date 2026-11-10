@@ -23,6 +23,7 @@ public class PaymentController {
     private final DataSource dataSource;
     private final PaymentGatewaySimulator gatewaySimulator;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final java.util.concurrent.ConcurrentHashMap<String, Object> paymentLocks = new java.util.concurrent.ConcurrentHashMap<>();
 
     public PaymentController(DataSource dataSource, PaymentGatewaySimulator gatewaySimulator) {
         this.dataSource = dataSource;
@@ -81,8 +82,11 @@ public class PaymentController {
                     Map<String, Object> p = new HashMap<>();
                     p.put("id", rs.getInt("id"));
                     p.put("payment_id", rs.getString("payment_id"));
+                    p.put("paymentId", rs.getString("payment_id"));
                     p.put("order_id", rs.getString("order_id"));
+                    p.put("orderId", rs.getString("order_id"));
                     p.put("amount_cents", rs.getInt("amount_cents"));
+                    p.put("amountCents", rs.getInt("amount_cents"));
                     p.put("currency", rs.getString("currency"));
                     p.put("status", rs.getString("status"));
                     p.put("created_at", rs.getLong("created_at"));
@@ -92,6 +96,32 @@ public class PaymentController {
             }
         }
         throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Payment not found for paymentId: " + paymentId);
+    }
+
+    @GetMapping("/order/{orderId}")
+    public ResponseEntity<Map<String, Object>> getPaymentByOrderId(@PathVariable String orderId) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement("SELECT id, payment_id, order_id, amount_cents, currency, status, created_at, updated_at FROM payments WHERE order_id = ?")) {
+            ps.setString(1, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    Map<String, Object> p = new HashMap<>();
+                    p.put("id", rs.getInt("id"));
+                    p.put("payment_id", rs.getString("payment_id"));
+                    p.put("paymentId", rs.getString("payment_id"));
+                    p.put("order_id", rs.getString("order_id"));
+                    p.put("orderId", rs.getString("order_id"));
+                    p.put("amount_cents", rs.getInt("amount_cents"));
+                    p.put("amountCents", rs.getInt("amount_cents"));
+                    p.put("currency", rs.getString("currency"));
+                    p.put("status", rs.getString("status"));
+                    p.put("created_at", rs.getLong("created_at"));
+                    p.put("updated_at", rs.getLong("updated_at"));
+                    return ResponseEntity.ok(p);
+                }
+            }
+        }
+        throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Payment not found for orderId: " + orderId);
     }
 
     @PostMapping("/charge")
@@ -114,10 +144,16 @@ public class PaymentController {
 
         long now = System.currentTimeMillis();
 
-        try (Connection conn = dataSource.getConnection()) {
-            conn.setAutoCommit(false);
+        String paymentId = "pay-" + sha256(request.orderId()).substring(0, 16);
+        String gatewayRef = "gw-" + sha256(request.orderId() + ":" + idempotencyKey).substring(0, 16);
+
+        Object lock = paymentLocks.computeIfAbsent(paymentId, k -> new Object());
+        synchronized (lock) {
             try {
-                // 1. Idempotency Check
+                try (Connection conn = dataSource.getConnection()) {
+                    conn.setAutoCommit(false);
+                    try {
+                        // 1. Idempotency Check
                 try (PreparedStatement ps = conn.prepareStatement("SELECT request_hash, response_body FROM payment_idempotency WHERE idempotency_key = ?")) {
                     ps.setString(1, idempotencyKey);
                     try (ResultSet rs = ps.executeQuery()) {
@@ -162,16 +198,16 @@ public class PaymentController {
                 gatewaySimulator.applySimulation();
 
                 // 4. Record Successful Payment
-                String paymentId = "pay-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
                 try (PreparedStatement ps = conn.prepareStatement(
-                        "INSERT INTO payments (payment_id, order_id, amount_cents, currency, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")) {
+                        "INSERT INTO payments (payment_id, order_id, amount_cents, currency, status, refunded_amount_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
                     ps.setString(1, paymentId);
                     ps.setString(2, request.orderId());
                     ps.setInt(3, request.amountCents());
                     ps.setString(4, currency);
                     ps.setString(5, "CAPTURED");
-                    ps.setLong(6, now);
+                    ps.setInt(6, 0);
                     ps.setLong(7, now);
+                    ps.setLong(8, now);
                     ps.executeUpdate();
                 }
 
@@ -181,7 +217,7 @@ public class PaymentController {
                     ps.setString(1, paymentId);
                     ps.setInt(2, 1);
                     ps.setString(3, "SUCCESS");
-                    ps.setString(4, "gw-" + UUID.randomUUID().toString().substring(0, 12));
+                    ps.setString(4, gatewayRef);
                     ps.setString(5, "APPROVED");
                     ps.setString(6, null);
                     ps.setLong(7, now);
@@ -215,6 +251,10 @@ public class PaymentController {
                 throw e;
             }
         }
+            } finally {
+                paymentLocks.remove(paymentId);
+            }
+        }
     }
 
     @PostMapping("/refund")
@@ -232,10 +272,13 @@ public class PaymentController {
         String requestHash = sha256(request.paymentId() + ":" + request.amountCents());
         long now = System.currentTimeMillis();
 
-        try (Connection conn = dataSource.getConnection()) {
-            conn.setAutoCommit(false);
+        Object lock = paymentLocks.computeIfAbsent(request.paymentId(), k -> new Object());
+        synchronized (lock) {
             try {
-                // 1. Idempotency Check
+                try (Connection conn = dataSource.getConnection()) {
+                    conn.setAutoCommit(false);
+                    try {
+                        // 1. Idempotency Check
                 try (PreparedStatement ps = conn.prepareStatement("SELECT request_hash, response_body FROM payment_idempotency WHERE idempotency_key = ?")) {
                     ps.setString(1, idempotencyKey);
                     try (ResultSet rs = ps.executeQuery()) {
@@ -302,13 +345,20 @@ public class PaymentController {
                     ps.executeUpdate();
                 }
 
-                // 6. Update Payment Status
+                // 6. Update Payment Status & Cumulative Refunded Amount
                 String newPaymentStatus = (projectedTotal == capturedAmountCents) ? "REFUNDED" : "PARTIALLY_REFUNDED";
-                try (PreparedStatement ps = conn.prepareStatement("UPDATE payments SET status = ?, updated_at = ? WHERE payment_id = ?")) {
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "UPDATE payments SET status = ?, refunded_amount_cents = ?, updated_at = ? WHERE payment_id = ? AND ? <= amount_cents")) {
                     ps.setString(1, newPaymentStatus);
-                    ps.setLong(2, now);
-                    ps.setString(3, request.paymentId());
-                    ps.executeUpdate();
+                    ps.setInt(2, projectedTotal);
+                    ps.setLong(3, now);
+                    ps.setString(4, request.paymentId());
+                    ps.setInt(5, projectedTotal);
+                    int updatedRows = ps.executeUpdate();
+                    if (updatedRows == 0) {
+                        conn.rollback();
+                        throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "Cumulative refund amount would exceed captured payment");
+                    }
                 }
 
                 Map<String, Object> responseMap = new HashMap<>();
@@ -337,6 +387,10 @@ public class PaymentController {
             } catch (Exception e) {
                 conn.rollback();
                 throw e;
+            }
+        }
+            } finally {
+                paymentLocks.remove(request.paymentId());
             }
         }
     }
