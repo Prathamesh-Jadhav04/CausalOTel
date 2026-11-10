@@ -70,10 +70,14 @@ cpp-core/bin/
 observability/bin/
 observability/data/
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 tempo-data/
 prometheus-data/
+.bootstrap_admin_token
+/data/
 
 # IDEs and Editors
 .idea/
