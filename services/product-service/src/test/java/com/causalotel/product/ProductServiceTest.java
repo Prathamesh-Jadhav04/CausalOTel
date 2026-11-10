@@ -91,11 +91,22 @@ class ProductServiceTest {
     }
 
     @Test
-    @DisplayName("GET /api/products returns product list")
+    @DisplayName("GET /api/products returns product list and includes seeded items")
     void testGetProducts() throws SQLException {
         ResponseEntity<List<Map<String, Object>>> response = productController.getProducts();
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertNotNull(response.getBody());
+        assertTrue(response.getBody().size() >= 4, "Should contain at least the 4 seeded products");
+    }
+
+    @Test
+    @DisplayName("GET /api/products/{sku} successfully retrieves seeded laptop SKU")
+    void testGetSeededProductBySku() throws SQLException {
+        ResponseEntity<Map<String, Object>> response = productController.getProductBySku("SKU-LAPTOP-001");
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertEquals("SKU-LAPTOP-001", response.getBody().get("sku"));
+        assertEquals(129999, response.getBody().get("price_cents"));
     }
 
     @Test
