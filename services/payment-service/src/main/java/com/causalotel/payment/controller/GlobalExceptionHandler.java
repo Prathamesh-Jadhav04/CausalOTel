@@ -1,5 +1,6 @@
 package com.causalotel.payment.controller;
 
+import com.causalotel.payment.service.PaymentGatewaySimulator;
 import io.opentelemetry.api.trace.Span;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,6 +20,39 @@ import java.util.Map;
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    @ExceptionHandler(PaymentGatewaySimulator.PaymentDeclinedException.class)
+    public ProblemDetail handlePaymentDeclined(PaymentGatewaySimulator.PaymentDeclinedException ex) {
+        log.warn("Payment declined: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
+        problem.setType(URI.create("https://causalotel.io/errors/422"));
+        problem.setTitle("Payment Declined");
+        problem.setProperty("timestamp", Instant.now().toEpochMilli());
+        attachTraceIdIfValid(problem);
+        return problem;
+    }
+
+    @ExceptionHandler(PaymentGatewaySimulator.GatewayTimeoutException.class)
+    public ProblemDetail handleGatewayTimeout(PaymentGatewaySimulator.GatewayTimeoutException ex) {
+        log.error("Payment gateway timeout: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.GATEWAY_TIMEOUT, ex.getMessage());
+        problem.setType(URI.create("https://causalotel.io/errors/504"));
+        problem.setTitle("Gateway Timeout");
+        problem.setProperty("timestamp", Instant.now().toEpochMilli());
+        attachTraceIdIfValid(problem);
+        return problem;
+    }
+
+    @ExceptionHandler(PaymentGatewaySimulator.GatewayDownException.class)
+    public ProblemDetail handleGatewayDown(PaymentGatewaySimulator.GatewayDownException ex) {
+        log.error("Payment gateway service unavailable: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
+        problem.setType(URI.create("https://causalotel.io/errors/503"));
+        problem.setTitle("Service Unavailable");
+        problem.setProperty("timestamp", Instant.now().toEpochMilli());
+        attachTraceIdIfValid(problem);
+        return problem;
+    }
 
     @ExceptionHandler(ResponseStatusException.class)
     public ProblemDetail handleResponseStatusException(ResponseStatusException ex) {
