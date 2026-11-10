@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Threading.Tasks;
+using CausalOTel.InventoryService.Controllers;
 using CausalOTel.InventoryService.Data;
 using CausalOTel.InventoryService.Models;
 using Microsoft.AspNetCore.Hosting;
@@ -27,15 +29,8 @@ public class InventoryServiceTests : IClassFixture<WebApplicationFactory<Program
 
         _factory = factory.WithWebHostBuilder(builder =>
         {
+            builder.UseEnvironment("Testing");
             builder.UseSetting("SQLITE_DB_PATH", _testDbPath);
-            builder.ConfigureServices(services =>
-            {
-                // Ensure fresh schema for tests
-                var sp = services.BuildServiceProvider();
-                using var scope = sp.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
-                db.Database.EnsureCreated();
-            });
         });
     }
 
@@ -98,7 +93,7 @@ public class InventoryServiceTests : IClassFixture<WebApplicationFactory<Program
         var sku = $"TEST-SKU-{Guid.NewGuid():N}";
         var item = new StockItem
         {
-            ProductId = "prod-test-01",
+            ProductId = $"prod-{Guid.NewGuid():N}",
             Sku = sku,
             AvailableQuantity = 150,
             ReservedQuantity = 10,
@@ -122,8 +117,8 @@ public class InventoryServiceTests : IClassFixture<WebApplicationFactory<Program
 
         for (int i = 0; i < 3; i++)
         {
+            db.Database.OpenConnection();
             var conn = db.Database.GetDbConnection();
-            if (conn.State != System.Data.ConnectionState.Open) conn.Open();
 
             using var cmd = conn.CreateCommand();
 
@@ -141,7 +136,9 @@ public class InventoryServiceTests : IClassFixture<WebApplicationFactory<Program
 
             cmd.CommandText = "PRAGMA synchronous;";
             var sync = Convert.ToInt32(cmd.ExecuteScalar());
-            Assert.Equal(1, sync); // 1 = NORMAL
+            Assert.Equal(1, sync);
+
+            db.Database.CloseConnection();
         }
     }
 
@@ -158,5 +155,114 @@ public class InventoryServiceTests : IClassFixture<WebApplicationFactory<Program
         using var doc = JsonDocument.Parse(content);
         Assert.Equal(404, doc.RootElement.GetProperty("status").GetInt32());
         Assert.Equal("https://causalotel.io/errors/404", doc.RootElement.GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public async Task Reserve_Commit_And_Release_Workflow()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+
+        var sku = $"SKU-TEST-RES-{Guid.NewGuid():N}";
+        db.StockItems.Add(new StockItem
+        {
+            ProductId = $"PROD-{Guid.NewGuid():N}",
+            Sku = sku,
+            AvailableQuantity = 10,
+            ReservedQuantity = 0,
+            UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        });
+        await db.SaveChangesAsync();
+
+        var client = _factory.CreateClient();
+        var orderId = $"ORD-RES-{Guid.NewGuid():N}";
+
+        // 1. Reserve 3 items
+        var reserveReq = new ReserveRequest(orderId, new List<ReserveItemDto> { new ReserveItemDto(sku, 3) });
+        var resResponse = await client.PostAsJsonAsync("/api/inventory/reserve", reserveReq);
+        Assert.Equal(HttpStatusCode.OK, resResponse.StatusCode);
+
+        // Check stock: available 7, reserved 3
+        var itemAfterReserve = await db.StockItems.AsNoTracking().FirstAsync(s => s.Sku == sku);
+        Assert.Equal(7, itemAfterReserve.AvailableQuantity);
+        Assert.Equal(3, itemAfterReserve.ReservedQuantity);
+
+        // 2. Duplicate reservation is idempotent
+        var dupResponse = await client.PostAsJsonAsync("/api/inventory/reserve", reserveReq);
+        Assert.Equal(HttpStatusCode.OK, dupResponse.StatusCode);
+
+        // 3. Commit reservation
+        var commitReq = new CommitRequest(orderId);
+        var commitResp = await client.PostAsJsonAsync("/api/inventory/commit", commitReq);
+        Assert.Equal(HttpStatusCode.OK, commitResp.StatusCode);
+
+        // Check stock: available 7, reserved 0
+        var itemAfterCommit = await db.StockItems.AsNoTracking().FirstAsync(s => s.Sku == sku);
+        Assert.Equal(7, itemAfterCommit.AvailableQuantity);
+        Assert.Equal(0, itemAfterCommit.ReservedQuantity);
+    }
+
+    [Fact]
+    public async Task Reserve_Release_Workflow_RestoresStock()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+
+        var sku = $"SKU-TEST-REL-{Guid.NewGuid():N}";
+        db.StockItems.Add(new StockItem
+        {
+            ProductId = $"PROD-{Guid.NewGuid():N}",
+            Sku = sku,
+            AvailableQuantity = 5,
+            ReservedQuantity = 0,
+            UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        });
+        await db.SaveChangesAsync();
+
+        var client = _factory.CreateClient();
+        var orderId = $"ORD-REL-{Guid.NewGuid():N}";
+
+        // Reserve 4
+        var reserveReq = new ReserveRequest(orderId, new List<ReserveItemDto> { new ReserveItemDto(sku, 4) });
+        var resResponse = await client.PostAsJsonAsync("/api/inventory/reserve", reserveReq);
+        Assert.Equal(HttpStatusCode.OK, resResponse.StatusCode);
+
+        // Release
+        var releaseReq = new ReleaseRequest(orderId, "Payment declined");
+        var relResponse = await client.PostAsJsonAsync("/api/inventory/release", releaseReq);
+        Assert.Equal(HttpStatusCode.OK, relResponse.StatusCode);
+
+        // Stock restored: available 5, reserved 0
+        var itemAfterRelease = await db.StockItems.AsNoTracking().FirstAsync(s => s.Sku == sku);
+        Assert.Equal(5, itemAfterRelease.AvailableQuantity);
+        Assert.Equal(0, itemAfterRelease.ReservedQuantity);
+    }
+
+    [Fact]
+    public async Task Reserve_InsufficientStock_ReturnsConflict409()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+
+        var sku = $"SKU-TEST-LOW-{Guid.NewGuid():N}";
+        db.StockItems.Add(new StockItem
+        {
+            ProductId = $"PROD-{Guid.NewGuid():N}",
+            Sku = sku,
+            AvailableQuantity = 2,
+            ReservedQuantity = 0,
+            UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        });
+        await db.SaveChangesAsync();
+
+        var client = _factory.CreateClient();
+        var orderId = $"ORD-LOW-{Guid.NewGuid():N}";
+
+        // Try reserving 5 when only 2 available
+        var reserveReq = new ReserveRequest(orderId, new List<ReserveItemDto> { new ReserveItemDto(sku, 5) });
+        var response = await client.PostAsJsonAsync("/api/inventory/reserve", reserveReq);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
     }
 }

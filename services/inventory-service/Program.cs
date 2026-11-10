@@ -1,6 +1,9 @@
 using System;
 using System.IO;
+using System.Linq;
 using CausalOTel.InventoryService.Data;
+using CausalOTel.InventoryService.Models;
+using CausalOTel.InventoryService.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -48,6 +51,12 @@ var connectionString = new SqliteConnectionStringBuilder
 }.ToString();
 
 builder.Services.AddSingleton<SqlitePragmaConnectionInterceptor>();
+builder.Services.AddSingleton<InventoryFaultState>();
+
+if (!builder.Environment.IsEnvironment("Testing"))
+{
+    builder.Services.AddHostedService<ReservationExpiryWorker>();
+}
 
 builder.Services.AddDbContext<InventoryDbContext>((sp, options) =>
 {
@@ -69,7 +78,7 @@ app.UseExceptionHandler();
 // Expose Prometheus Scraping Endpoint on /metrics
 app.UseOpenTelemetryPrometheusScrapingEndpoint("/metrics");
 
-// 4. One-Time Database Header Initialization & Schema Baseline
+// 4. One-Time Database Header Initialization & Schema Baseline & Seeding
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
@@ -81,6 +90,18 @@ using (var scope = app.Services.CreateScope())
         cmd.ExecuteNonQuery();
     }
     db.Database.EnsureCreated();
+
+    long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+    if (!db.StockItems.Any())
+    {
+        db.StockItems.AddRange(
+            new StockItem { ProductId = "PROD-001", Sku = "SKU-LAPTOP-001", AvailableQuantity = 50, ReservedQuantity = 0, UpdatedAt = now },
+            new StockItem { ProductId = "PROD-002", Sku = "SKU-PHONE-002", AvailableQuantity = 100, ReservedQuantity = 0, UpdatedAt = now },
+            new StockItem { ProductId = "PROD-003", Sku = "SKU-HEADPHONES-003", AvailableQuantity = 200, ReservedQuantity = 0, UpdatedAt = now },
+            new StockItem { ProductId = "PROD-004", Sku = "SKU-OUT-OF-STOCK-004", AvailableQuantity = 0, ReservedQuantity = 0, UpdatedAt = now }
+        );
+        db.SaveChanges();
+    }
 }
 
 app.MapControllers();
