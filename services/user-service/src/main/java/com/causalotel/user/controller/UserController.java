@@ -1,0 +1,68 @@
+package com.causalotel.user.controller;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
+
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/users")
+public class UserController {
+
+    private final DataSource dataSource;
+
+    public UserController(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+
+    @GetMapping
+    public ResponseEntity<List<Map<String, Object>>> getUsers() throws SQLException {
+        List<Map<String, Object>> users = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement("SELECT id, username, email, role, created_at, updated_at FROM users");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                Map<String, Object> u = new HashMap<>();
+                u.put("id", rs.getInt("id"));
+                u.put("username", rs.getString("username"));
+                u.put("email", rs.getString("email"));
+                u.put("role", rs.getString("role"));
+                u.put("created_at", rs.getLong("created_at"));
+                u.put("updated_at", rs.getLong("updated_at"));
+                users.add(u);
+            }
+        }
+        return ResponseEntity.ok(users);
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<Map<String, Object>> getUserById(@PathVariable int id) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement("SELECT id, username, email, role, created_at, updated_at FROM users WHERE id = ?")) {
+            ps.setInt(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    Map<String, Object> u = new HashMap<>();
+                    u.put("id", rs.getInt("id"));
+                    u.put("username", rs.getString("username"));
+                    u.put("email", rs.getString("email"));
+                    u.put("role", rs.getString("role"));
+                    u.put("created_at", rs.getLong("created_at"));
+                    u.put("updated_at", rs.getLong("updated_at"));
+                    return ResponseEntity.ok(u);
+                }
+            }
+        }
+        throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found for id: " + id);
+    }
+}
