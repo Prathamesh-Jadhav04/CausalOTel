@@ -1,0 +1,89 @@
+# ==========================================
+# CausalOTel Polyglot .gitignore
+# Covering: Java, .NET, Node.js, C++, IDEs & OS
+# ==========================================
+
+# Environment & Sensitive Information
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+secrets/
+
+# Node.js / React
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-debug.log*
+dist/
+build/
+.cache/
+
+# Java / Spring Boot (Maven & Gradle)
+target/
+*.class
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+.mvn/wrapper/maven-wrapper.jar
+*.log
+
+# .NET (C#)
+bin/
+obj/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.nupkg
+*.snupkg
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# C++ (CMake & Compilers)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.pdb
+*.ilk
+*.lib
+cpp-core/build/
+cpp-core/bin/
+
+# Observability Binaries & Local Data
+observability/bin/
+observability/data/
+*.db
+*.sqlite
+*.sqlite3
+tempo-data/
+prometheus-data/
+
+# IDEs and Editors
+.idea/
+*.iml
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
