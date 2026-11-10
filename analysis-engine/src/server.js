@@ -4,12 +4,21 @@ import mongoose from 'mongoose';
 import client from 'prom-client';
 import { trace } from '@opentelemetry/api';
 import { IncidentSpool } from './spool.js';
+import { TempoClient } from './tempo_client.js';
+import { PrometheusClient } from './prometheus_client.js';
+import { RcaEngine } from './rca_engine.js';
+import { IncidentStore } from './incident_store.js';
+import { DependencyGraph } from './graph.js';
 
 const app = express();
 const port = parseInt(process.env.PORT, 10) || 5000;
 const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/causalotel_rca';
 
 export const incidentSpool = new IncidentSpool();
+export const tempoClient = new TempoClient();
+export const prometheusClient = new PrometheusClient();
+export const rcaEngine = new RcaEngine(tempoClient, prometheusClient);
+export const incidentStore = new IncidentStore(incidentSpool);
 
 // Prometheus Metrics Collection
 client.collectDefaultMetrics({ prefix: 'causalotel_analysis_' });
@@ -74,6 +83,68 @@ app.get('/api/analysis', async (req, res, next) => {
     }
 });
 
+// List Incidents
+app.get('/api/analysis/incidents', (req, res) => {
+    const list = incidentStore.listIncidents();
+    res.json(list);
+});
+
+// Get Single Incident Detail
+app.get('/api/analysis/incidents/:id', (req, res, next) => {
+    const incident = incidentStore.getIncident(req.params.id);
+    if (!incident) {
+        const err = new Error(`Incident not found: ${req.params.id}`);
+        err.status = 404;
+        return next(err);
+    }
+    res.json(incident);
+});
+
+// Trigger Root Cause Analysis on a Trace ID
+app.post('/api/analysis/analyze-trace', async (req, res, next) => {
+    try {
+        const { traceId } = req.body;
+        if (!traceId) {
+            const err = new Error('traceId is required');
+            err.status = 400;
+            throw err;
+        }
+
+        const rcaResult = await rcaEngine.analyzeTrace(traceId);
+        incidentStore.saveIncident(rcaResult);
+
+        res.json(rcaResult);
+    } catch (err) {
+        next(err);
+    }
+});
+
+// Dependency Graph Topology with Tarjan SCC
+app.get('/api/analysis/graph', (req, res) => {
+    const graph = new DependencyGraph();
+    // Default system microservices topology
+    graph.addEdge('dashboard', 'order-service');
+    graph.addEdge('dashboard', 'product-service');
+    graph.addEdge('dashboard', 'user-service');
+    graph.addEdge('order-service', 'inventory-service');
+    graph.addEdge('order-service', 'payment-service');
+    graph.addEdge('analysis-engine', 'order-service');
+    graph.addEdge('analysis-engine', 'inventory-service');
+    graph.addEdge('analysis-engine', 'payment-service');
+
+    res.json(graph.toJSON());
+});
+
+// Correlated Prometheus Metrics
+app.get('/api/analysis/metrics', async (req, res, next) => {
+    try {
+        const metrics = await prometheusClient.getServiceMetrics();
+        res.json(metrics);
+    } catch (err) {
+        next(err);
+    }
+});
+
 // Incident Spool Ingestion Endpoint
 app.post('/api/analysis/spool', async (req, res, next) => {
     try {
@@ -84,6 +155,8 @@ app.post('/api/analysis/spool', async (req, res, next) => {
             throw err;
         }
         const filePath = await incidentSpool.spoolIncident(incidentId, data);
+        incidentStore.saveIncident({ incidentId, ...data });
+
         res.status(202).json({
             status: 'SPOOLED',
             incidentId,
@@ -100,7 +173,6 @@ app.use((err, req, res, next) => {
     res.status(status);
     res.setHeader('Content-Type', 'application/problem+json');
 
-    // Never leak raw SQL/filesystem details to public clients for generic 500s
     const safeDetail = status >= 500 
         ? 'An unexpected error occurred while processing the analysis request.' 
         : (err.detail || err.message || 'Request failed');
@@ -127,7 +199,6 @@ app.use((err, req, res, next) => {
 
 // MongoDB Connection Bootstrap
 export async function connectMongo(uri = mongoUri) {
-    console.log(`Connecting to MongoDB at: ${sanitizeMongoUri(uri)}`);
     try {
         await mongoose.connect(uri, {
             serverSelectionTimeoutMS: 3000
