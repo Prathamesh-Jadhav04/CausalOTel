@@ -2,6 +2,7 @@ package com.causalotel.payment.service;
 
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PostConstruct;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -19,6 +20,15 @@ public class PaymentGatewaySimulator {
     private final AtomicInteger latencyMs = new AtomicInteger(0);
     private final AtomicReference<FaultMode> faultMode = new AtomicReference<>(FaultMode.NORMAL);
     private final AtomicReference<String> customErrorMessage = new AtomicReference<>(null);
+
+    /**
+     * H-01: fault state must not survive a restart, otherwise an earlier
+     * injected failure silently degrades a fresh process.
+     */
+    @PostConstruct
+    public void resetOnStartup() {
+        reset();
+    }
 
     public int getLatencyMs() {
         return latencyMs.get();

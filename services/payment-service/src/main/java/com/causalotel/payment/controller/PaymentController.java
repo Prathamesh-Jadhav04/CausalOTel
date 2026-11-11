@@ -1,9 +1,14 @@
 package com.causalotel.payment.controller;
 
+import com.causalotel.payment.security.AuthPrincipal;
 import com.causalotel.payment.service.PaymentGatewaySimulator;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -20,10 +25,17 @@ import java.util.*;
 @RequestMapping("/api/payments")
 public class PaymentController {
 
+    private static final Logger log = LoggerFactory.getLogger(PaymentController.class);
+    private static final int MAX_FAULT_LATENCY_MS = 10_000;
+    private static final int MAX_ERROR_MESSAGE_LENGTH = 500;
+
     private final DataSource dataSource;
     private final PaymentGatewaySimulator gatewaySimulator;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final java.util.concurrent.ConcurrentHashMap<String, Object> paymentLocks = new java.util.concurrent.ConcurrentHashMap<>();
+
+    @Value("${causalotel.fault-injection.enabled:true}")
+    private boolean faultInjectionEnabled;
 
     public PaymentController(DataSource dataSource, PaymentGatewaySimulator gatewaySimulator) {
         this.dataSource = dataSource;
@@ -396,20 +408,47 @@ public class PaymentController {
     }
 
     @PostMapping("/fault")
-    public ResponseEntity<Map<String, Object>> setFault(@RequestBody FaultConfig config) {
+    public ResponseEntity<Map<String, Object>> setFault(@RequestBody FaultConfig config,
+                                                        Authentication authentication) {
+        if (!faultInjectionEnabled) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Fault injection is disabled");
+        }
+        if (config == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Fault configuration is required");
+        }
+        if (config.latencyMs() != null && (config.latencyMs() < 0 || config.latencyMs() > MAX_FAULT_LATENCY_MS)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "latencyMs must be between 0 and " + MAX_FAULT_LATENCY_MS);
+        }
+        if (config.errorMessage() != null && config.errorMessage().length() > MAX_ERROR_MESSAGE_LENGTH) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "errorMessage must be at most " + MAX_ERROR_MESSAGE_LENGTH + " characters");
+        }
+
+        // Validate the enum before mutating any state so a rejected request
+        // cannot leave a partially applied fault configuration behind.
+        PaymentGatewaySimulator.FaultMode mode = PaymentGatewaySimulator.FaultMode.NORMAL;
+        if (config.faultMode() != null) {
+            try {
+                mode = PaymentGatewaySimulator.FaultMode.valueOf(config.faultMode().toUpperCase());
+            } catch (IllegalArgumentException e) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Unknown faultMode: " + config.faultMode());
+            }
+        }
+
         if (config.latencyMs() != null) {
             gatewaySimulator.setLatencyMs(config.latencyMs());
         }
-        if (config.faultMode() != null) {
-            try {
-                gatewaySimulator.setFaultMode(PaymentGatewaySimulator.FaultMode.valueOf(config.faultMode().toUpperCase()));
-            } catch (IllegalArgumentException e) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown faultMode: " + config.faultMode());
-            }
-        } else {
-            gatewaySimulator.setFaultMode(PaymentGatewaySimulator.FaultMode.NORMAL);
-        }
+        gatewaySimulator.setFaultMode(mode);
         gatewaySimulator.setCustomErrorMessage(config.errorMessage());
+
+        AuthPrincipal caller = authentication != null && authentication.getPrincipal() instanceof AuthPrincipal p
+                ? p : null;
+        log.info("AUDIT fault configuration changed by user={} role={}: latencyMs={}, faultMode={}",
+                caller != null ? caller.userId() : "unknown",
+                caller != null ? caller.role() : "unknown",
+                gatewaySimulator.getLatencyMs(), gatewaySimulator.getFaultMode());
 
         Map<String, Object> resp = new HashMap<>();
         resp.put("status", "UPDATED");
@@ -421,6 +460,9 @@ public class PaymentController {
 
     @GetMapping("/fault")
     public ResponseEntity<Map<String, Object>> getFault() {
+        if (!faultInjectionEnabled) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Fault injection is disabled");
+        }
         Map<String, Object> resp = new HashMap<>();
         resp.put("latencyMs", gatewaySimulator.getLatencyMs());
         resp.put("faultMode", gatewaySimulator.getFaultMode().name());
