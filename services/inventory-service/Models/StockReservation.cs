@@ -7,6 +7,7 @@ public class StockReservation
     public string Sku { get; set; } = string.Empty;
     public int Quantity { get; set; }
     public string Status { get; set; } = "PENDING"; // PENDING, RESERVED, COMMITTED, RELEASED, EXPIRED
+    public string RequestHash { get; set; } = string.Empty; // Canonical payload hash for idempotent replays
     public long ExpiresAt { get; set; } // Epoch ms UTC
     public long CreatedAt { get; set; } // Epoch ms UTC
     public long UpdatedAt { get; set; } // Epoch ms UTC

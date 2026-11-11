@@ -37,11 +37,15 @@ public class InventoryDbContext : DbContext
             entity.Property(e => e.Sku).HasMaxLength(64).IsRequired();
             entity.Property(e => e.Quantity).IsRequired();
             entity.Property(e => e.Status).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.RequestHash).HasMaxLength(64).IsRequired().HasDefaultValue(string.Empty);
             entity.Property(e => e.ExpiresAt).IsRequired();
             entity.Property(e => e.CreatedAt).IsRequired();
             entity.Property(e => e.UpdatedAt).IsRequired();
             entity.HasIndex(e => e.OrderId);
             entity.HasIndex(e => e.Status);
+            // H-04: the database, not a check-then-act read, decides which
+            // concurrent reserve request wins for an (order, SKU) pair.
+            entity.HasIndex(e => new { e.OrderId, e.Sku }).IsUnique();
         });
     }
 }

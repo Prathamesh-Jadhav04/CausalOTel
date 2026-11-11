@@ -3,7 +3,9 @@ using System.IO;
 using System.Linq;
 using CausalOTel.InventoryService.Data;
 using CausalOTel.InventoryService.Models;
+using CausalOTel.InventoryService.Security;
 using CausalOTel.InventoryService.Services;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -77,6 +79,15 @@ var connectionString = new SqliteConnectionStringBuilder
 builder.Services.AddSingleton<SqlitePragmaConnectionInterceptor>();
 builder.Services.AddSingleton<InventoryFaultState>();
 
+// H-02: signed bearer-token authentication for every business endpoint.
+builder.Services.AddSingleton<TokenValidator>();
+builder.Services.AddSingleton<ServiceTokenProvider>();
+builder.Services
+    .AddAuthentication(BearerAuthenticationHandler.SchemeName)
+    .AddScheme<AuthenticationSchemeOptions, BearerAuthenticationHandler>(
+        BearerAuthenticationHandler.SchemeName, null);
+builder.Services.AddAuthorization();
+
 if (!isTesting)
 {
     builder.Services.AddHostedService<ReservationExpiryWorker>();
@@ -102,6 +113,9 @@ app.UseExceptionHandler();
 // Expose Prometheus Scraping Endpoint on /metrics
 app.UseOpenTelemetryPrometheusScrapingEndpoint("/metrics");
 
+app.UseAuthentication();
+app.UseAuthorization();
+
 // 4. One-Time Database Header Initialization & Schema Baseline & Seeding
 using (var scope = app.Services.CreateScope())
 {
@@ -114,6 +128,40 @@ using (var scope = app.Services.CreateScope())
         cmd.ExecuteNonQuery();
     }
     db.Database.EnsureCreated();
+
+    // H-04 schema upgrade for databases created before the unique constraint.
+    // EnsureCreated() does not alter an existing table, so add the canonical
+    // request hash column and the unique (OrderId, Sku) index explicitly.
+    using (var schemaCmd = conn.CreateCommand())
+    {
+        schemaCmd.CommandText = "PRAGMA table_info(stock_reservations)";
+        bool hasRequestHash = false;
+        using (var reader = schemaCmd.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                if (string.Equals(reader.GetString(1), "RequestHash", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasRequestHash = true;
+                    break;
+                }
+            }
+        }
+
+        if (!hasRequestHash)
+        {
+            using var alterCmd = conn.CreateCommand();
+            alterCmd.CommandText =
+                "ALTER TABLE stock_reservations ADD COLUMN RequestHash TEXT NOT NULL DEFAULT ''";
+            alterCmd.ExecuteNonQuery();
+        }
+
+        using var indexCmd = conn.CreateCommand();
+        indexCmd.CommandText =
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_stock_reservations_order_sku " +
+            "ON stock_reservations(OrderId, Sku)";
+        indexCmd.ExecuteNonQuery();
+    }
 
     long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     if (!db.StockItems.Any())
