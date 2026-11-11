@@ -8,6 +8,8 @@ import { PrometheusClient } from './prometheus_client.js';
 import { RcaEngine } from './rca_engine.js';
 import { IncidentStore } from './incident_store.js';
 import { DependencyGraph } from './graph.js';
+import { ServiceHealthProbe } from './service_probe.js';
+import { nativeCoreStatus } from './native_core.js';
 
 const app = express();
 const port = parseInt(process.env.PORT, 10) || 5000;
@@ -18,6 +20,7 @@ export const tempoClient = new TempoClient();
 export const prometheusClient = new PrometheusClient();
 export const rcaEngine = new RcaEngine(tempoClient, prometheusClient);
 export const incidentStore = new IncidentStore(incidentSpool);
+export const serviceHealthProbe = new ServiceHealthProbe();
 
 // Prometheus Metrics Collection
 client.collectDefaultMetrics({ prefix: 'causalotel_analysis_' });
@@ -136,6 +139,52 @@ app.get('/api/analysis/traces', async (req, res, next) => {
     } catch (err) {
         next(err);
     }
+});
+
+// Real span-level detail for a single Tempo trace. This feeds the dashboard
+// waterfall; Tempo failures propagate as typed problem details.
+app.get('/api/analysis/traces/:traceId', async (req, res, next) => {
+    try {
+        const trace = await tempoClient.fetchTrace(req.params.traceId);
+        res.json({
+            source: 'tempo',
+            traceId: trace.traceId,
+            totalSpans: trace.totalSpans,
+            spans: trace.spans.map(span => ({
+                spanId: span.spanId,
+                parentSpanId: span.parentSpanId,
+                name: span.name,
+                serviceName: span.serviceName,
+                kind: span.kind,
+                startMs: span.startMs,
+                durationMs: Number(span.durationMs.toFixed(1)),
+                selfTimeMs: Number(span.selfTimeMs.toFixed(1)),
+                statusCode: span.statusCode,
+                statusMessage: span.statusMessage,
+                timingEngine: span.timingEngine,
+                attributes: Object.fromEntries(
+                    Object.entries(span.attributes || {})
+                        .filter(([key]) => key.startsWith('http.') || key.startsWith('rpc.') || key.startsWith('db.'))
+                )
+            }))
+        });
+    } catch (err) {
+        next(err);
+    }
+});
+
+// Real service health probes for the dashboard (never fabricated).
+app.get('/api/analysis/services', async (req, res, next) => {
+    try {
+        res.json(await serviceHealthProbe.probeAll());
+    } catch (err) {
+        next(err);
+    }
+});
+
+// L-01: report the actual CMake target/output and whether it exists.
+app.get('/api/analysis/native-core', (req, res) => {
+    res.json(nativeCoreStatus());
 });
 
 // Trigger Root Cause Analysis on a Trace ID

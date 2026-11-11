@@ -20,7 +20,8 @@ const {
     tempoClient,
     prometheusClient,
     incidentStore,
-    incidentSpool
+    incidentSpool,
+    serviceHealthProbe
 } = await import('../src/server.js');
 const { TempoError } = await import('../src/tempo_client.js');
 const { PrometheusError } = await import('../src/prometheus_client.js');
@@ -278,5 +279,96 @@ describe('Analysis Engine Server & Health Endpoints', () => {
         assert.equal(res.status, 404);
         const problem = await res.json();
         assert.equal(problem.code, 'DEMO_FIXTURES_DISABLED');
+    });
+
+    test('GET /api/analysis/services reports real probe results', async () => {
+        const original = serviceHealthProbe.probeAll;
+        serviceHealthProbe.probeAll = async () => ({
+            checkedAt: new Date().toISOString(),
+            upCount: 1,
+            totalCount: 2,
+            services: [
+                { name: 'up-service', port: 1, status: 'UP', httpStatus: 200, latencyMs: 3 },
+                { name: 'down-service', port: 2, status: 'UNREACHABLE', httpStatus: null, latencyMs: 4, error: 'CONNECTION_REFUSED' }
+            ]
+        });
+        try {
+            const res = await fetch(`${baseUrl}/api/analysis/services`);
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.equal(body.upCount, 1);
+            assert.equal(body.totalCount, 2);
+            assert.equal(body.services[1].status, 'UNREACHABLE');
+        } finally {
+            serviceHealthProbe.probeAll = original;
+        }
+    });
+
+    test('GET /api/analysis/traces/:id returns real span detail without fabrication', async () => {
+        const original = tempoClient.fetchTrace;
+        tempoClient.fetchTrace = async (traceId) => ({
+            traceId,
+            totalSpans: 2,
+            spans: [
+                {
+                    spanId: 'span-a', parentSpanId: null, name: 'POST /checkout',
+                    serviceName: 'order-service', kind: 'SPAN_KIND_SERVER',
+                    startMs: 1000, durationMs: 250.5, selfTimeMs: 200.5,
+                    statusCode: 'OK', statusMessage: '', timingEngine: 'interval-union',
+                    attributes: { 'http.status_code': 200, 'user.email': 'must-not-leak' }
+                },
+                {
+                    spanId: 'span-b', parentSpanId: 'span-a', name: 'POST /charge',
+                    serviceName: 'payment-service', kind: 'SPAN_KIND_CLIENT',
+                    startMs: 1050, durationMs: 100, selfTimeMs: 100,
+                    statusCode: 'ERROR', statusMessage: 'gateway timeout',
+                    timingEngine: 'interval-union', attributes: { 'http.status_code': 504 }
+                }
+            ]
+        });
+        try {
+            const res = await fetch(`${baseUrl}/api/analysis/traces/trace-123`);
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.equal(body.source, 'tempo');
+            assert.equal(body.totalSpans, 2);
+            assert.equal(body.spans[1].serviceName, 'payment-service');
+            assert.equal(body.spans[1].selfTimeMs, 100);
+            assert.equal(body.spans[0].attributes['http.status_code'], 200);
+            assert.equal(body.spans[0].attributes['user.email'], undefined,
+                'non-telemetry attributes must not be exposed to the dashboard');
+        } finally {
+            tempoClient.fetchTrace = original;
+        }
+    });
+
+    test('GET /api/analysis/native-core reports the real CMake target state', async () => {
+        const res = await fetch(`${baseUrl}/api/analysis/native-core`);
+        assert.equal(res.status, 200);
+        const body = await res.json();
+        assert.equal(body.target, 'sweep_line');
+        assert.equal(typeof body.available, 'boolean');
+        assert.ok(body.buildCommand.includes('cmake'));
+        assert.ok(Array.isArray(body.checkedPaths));
+        assert.ok(body.checkedPaths.some(candidate => candidate.relative.includes('sweep_line')));
+        if (!body.available) {
+            assert.equal(body.binary, null);
+            assert.ok(body.expectedBinary.endsWith('sweep_line.exe'));
+        }
+    });
+
+    test('GET /api/analysis/traces/:id maps Tempo 404 to problem details', async () => {
+        const original = tempoClient.fetchTrace;
+        tempoClient.fetchTrace = async () => {
+            throw new TempoError('Trace not found', { status: 404, code: 'TRACE_NOT_FOUND' });
+        };
+        try {
+            const res = await fetch(`${baseUrl}/api/analysis/traces/missing-trace`);
+            assert.equal(res.status, 404);
+            const problem = await res.json();
+            assert.equal(problem.code, 'TRACE_NOT_FOUND');
+        } finally {
+            tempoClient.fetchTrace = original;
+        }
     });
 });
