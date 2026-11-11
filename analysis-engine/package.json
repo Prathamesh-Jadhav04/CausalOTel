@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node --import ./src/tracer.js src/server.js",
     "dev": "node --watch --import ./src/tracer.js src/server.js",
-    "test": "node --test test/**/*.test.js"
+    "test": "node --import ./test/setup-env.js --test test/**/*.test.js"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",

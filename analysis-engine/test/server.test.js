@@ -1,7 +1,20 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import app from '../src/server.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+// Defensive isolation even when this file is run directly (without npm test).
+const fallbackRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'causalotel-server-test-'));
+if (!process.env.CAUSALOTEL_TEST_ROOT) {
+    process.env.CAUSALOTEL_TEST_ROOT = fallbackRoot;
+    process.env.LOCALAPPDATA = fallbackRoot;
+    process.env.SPOOL_DIR = path.join(fallbackRoot, 'CausalOTel', 'spool', 'incidents');
+    fs.mkdirSync(process.env.SPOOL_DIR, { recursive: true });
+}
+
+const { default: app } = await import('../src/server.js');
 
 describe('Analysis Engine Server & Health Endpoints', () => {
     let server;
@@ -19,9 +32,16 @@ describe('Analysis Engine Server & Health Endpoints', () => {
     });
 
     after(async () => {
-        return new Promise((resolve) => {
+        await new Promise((resolve) => {
             server.close(resolve);
         });
+        if (process.env.CAUSALOTEL_TEST_ROOT === fallbackRoot) {
+            try {
+                fs.rmSync(fallbackRoot, { recursive: true, force: true });
+            } catch {
+                // Best-effort cleanup of the isolated test directory only.
+            }
+        }
     });
 
     test('GET /health/live returns 200 UP', async () => {

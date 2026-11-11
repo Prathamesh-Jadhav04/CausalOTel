@@ -9,6 +9,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.web.server.ResponseStatusException;
 
 import javax.sql.DataSource;
@@ -41,8 +43,15 @@ class UserBootstrapTest {
     private final String validToken = "test-token-abcdef1234567890abcdef1234567890";
     private final String validTokenHash = AdminBootstrapService.sha256(validToken);
 
+    @DynamicPropertySource
+    static void isolatedDatabase(DynamicPropertyRegistry registry) {
+        TestDatabaseSupport.register(registry, "user.db");
+    }
+
     @BeforeEach
     void resetDatabase() throws SQLException {
+        // Hard guard: never issue DELETE statements against the live CausalOTel database.
+        TestDatabaseSupport.assertIsolated(dataSource);
         try (Connection conn = dataSource.getConnection()) {
             conn.createStatement().execute("DELETE FROM users;");
             conn.createStatement().execute("DELETE FROM bootstrap_tokens;");

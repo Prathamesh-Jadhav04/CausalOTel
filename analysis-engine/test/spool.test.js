@@ -16,11 +16,26 @@ describe('IncidentSpool Tests', () => {
     });
 
     afterEach(async () => {
+        // Hard guard: only remove the per-test directory created under os.tmpdir().
+        const resolved = path.resolve(testSpoolDir);
+        if (!resolved.startsWith(path.resolve(os.tmpdir()) + path.sep)) {
+            throw new Error(`Refusing destructive cleanup outside the temp directory: ${resolved}`);
+        }
         try {
-            await fs.promises.rm(testSpoolDir, { recursive: true, force: true });
+            await fs.promises.rm(resolved, { recursive: true, force: true });
         } catch {
             // ignore cleanup errors
         }
+    });
+
+    test('Default spool path resolves inside the isolated test root', () => {
+        assert.ok(process.env.CAUSALOTEL_TEST_ROOT, 'test environment must provide CAUSALOTEL_TEST_ROOT');
+        const defaultSpool = new IncidentSpool();
+        const resolved = path.resolve(defaultSpool.spoolDir);
+        assert.ok(
+            resolved.startsWith(path.resolve(process.env.CAUSALOTEL_TEST_ROOT) + path.sep),
+            `default spool path must be isolated, got ${resolved}`
+        );
     });
 
     test('Spool incident writes file atomically with no lingering tmp files', async () => {

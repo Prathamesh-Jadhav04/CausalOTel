@@ -16,6 +16,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -68,8 +70,15 @@ class OrderServiceTest {
     @Autowired
     private DataSource dataSource;
 
+    @DynamicPropertySource
+    static void isolatedDatabase(DynamicPropertyRegistry registry) {
+        TestDatabaseSupport.register(registry, "order.db");
+    }
+
     @BeforeEach
     void setupMock() {
+        // Hard guard: saga recovery tests must never touch the live order database.
+        TestDatabaseSupport.assertIsolated(dataSource);
         Mockito.reset(downstreamServiceClient);
         when(downstreamServiceClient.reserveInventory(anyString(), any())).thenReturn(Map.of("status", "RESERVED"));
         when(downstreamServiceClient.chargePayment(anyString(), anyInt(), anyString(), anyString())).thenReturn(Map.of("status", "CAPTURED", "paymentId", "pay-test-123"));

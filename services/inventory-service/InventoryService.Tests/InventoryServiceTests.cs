@@ -36,6 +36,7 @@ public class InventoryServiceTests : IClassFixture<WebApplicationFactory<Program
 
     public void Dispose()
     {
+        AssertSafeTestDatabasePath(_testDbPath);
         try
         {
             if (File.Exists(_testDbPath)) File.Delete(_testDbPath);
@@ -45,6 +46,26 @@ public class InventoryServiceTests : IClassFixture<WebApplicationFactory<Program
             if (File.Exists(shm)) File.Delete(shm);
         }
         catch { }
+    }
+
+    private static void AssertSafeTestDatabasePath(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var tempRoot = Path.GetFullPath(Path.GetTempPath());
+        if (!fullPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Refusing destructive test cleanup outside the temp directory: {fullPath}");
+        }
+
+        var liveData = Path.GetFullPath(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "CausalOTel", "data"));
+        if (fullPath.StartsWith(liveData, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Refusing destructive test cleanup against live CausalOTel data: {fullPath}");
+        }
     }
 
     [Fact]
@@ -366,5 +387,25 @@ public class InventoryServiceTests : IClassFixture<WebApplicationFactory<Program
 
         var reservation = await verifyDb.StockReservations.AsNoTracking().FirstAsync(r => r.Id == reservationId);
         Assert.Equal("COMMITTED", reservation.Status);
+    }
+
+    [Fact]
+    public void TestDatabase_IsIsolatedFromLiveApplicationData()
+    {
+        var configuredPath = Path.GetFullPath(_testDbPath);
+        var tempRoot = Path.GetFullPath(Path.GetTempPath());
+        Assert.StartsWith(tempRoot, configuredPath, StringComparison.OrdinalIgnoreCase);
+
+        var liveData = Path.GetFullPath(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "CausalOTel", "data"));
+        Assert.False(
+            configuredPath.StartsWith(liveData, StringComparison.OrdinalIgnoreCase),
+            $"Test database must not live under {liveData}");
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+        var actualPath = Path.GetFullPath(db.Database.GetDbConnection().DataSource);
+        Assert.Equal(configuredPath, actualPath, ignoreCase: true);
     }
 }

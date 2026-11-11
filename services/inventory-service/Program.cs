@@ -36,11 +36,35 @@ builder.Services.AddOpenTelemetry()
             .AddPrometheusExporter();
     });
 
-// 2. Configure Database Path in LocalAppData (Outside OneDrive)
-var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-var dataDir = Path.Combine(localAppData, "CausalOTel", "data");
-Directory.CreateDirectory(dataDir);
-var dbPath = builder.Configuration["SQLITE_DB_PATH"] ?? Path.Combine(dataDir, "inventory.db");
+// 2. Configure Database Path in LocalAppData (Outside OneDrive).
+// In the Testing environment the path must be an explicit temporary database:
+// refusing anything else prevents tests from opening or deleting live data.
+var isTesting = builder.Environment.IsEnvironment("Testing");
+var configuredDbPath = builder.Configuration["SQLITE_DB_PATH"];
+string dbPath;
+if (isTesting)
+{
+    if (string.IsNullOrWhiteSpace(configuredDbPath))
+    {
+        throw new InvalidOperationException(
+            "Testing environment requires SQLITE_DB_PATH to point at an isolated temporary database.");
+    }
+
+    dbPath = Path.GetFullPath(configuredDbPath);
+    var tempRoot = Path.GetFullPath(Path.GetTempPath());
+    if (!dbPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException(
+            $"Refusing to run tests against a non-temporary database: {dbPath}");
+    }
+}
+else
+{
+    var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+    var dataDir = Path.Combine(localAppData, "CausalOTel", "data");
+    Directory.CreateDirectory(dataDir);
+    dbPath = configuredDbPath ?? Path.Combine(dataDir, "inventory.db");
+}
 
 // Build SQLite Connection String with DefaultTimeout = 5s (5000ms busy_timeout)
 var connectionString = new SqliteConnectionStringBuilder
@@ -53,7 +77,7 @@ var connectionString = new SqliteConnectionStringBuilder
 builder.Services.AddSingleton<SqlitePragmaConnectionInterceptor>();
 builder.Services.AddSingleton<InventoryFaultState>();
 
-if (!builder.Environment.IsEnvironment("Testing"))
+if (!isTesting)
 {
     builder.Services.AddHostedService<ReservationExpiryWorker>();
 }
