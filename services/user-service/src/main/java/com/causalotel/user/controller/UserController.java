@@ -15,6 +15,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * M-04: user identifiers are UUID strings end to end. H-02: these endpoints
+ * are restricted to ROLE_ADMIN by SecurityConfig.
+ */
 @RestController
 @RequestMapping("/api/users")
 public class UserController {
@@ -29,40 +33,40 @@ public class UserController {
     public ResponseEntity<List<Map<String, Object>>> getUsers() throws SQLException {
         List<Map<String, Object>> users = new ArrayList<>();
         try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement("SELECT id, username, email, role, created_at, updated_at FROM users");
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT id, username, email, role, created_at, updated_at FROM users");
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
-                Map<String, Object> u = new HashMap<>();
-                u.put("id", rs.getInt("id"));
-                u.put("username", rs.getString("username"));
-                u.put("email", rs.getString("email"));
-                u.put("role", rs.getString("role"));
-                u.put("created_at", rs.getLong("created_at"));
-                u.put("updated_at", rs.getLong("updated_at"));
-                users.add(u);
+                users.add(mapUser(rs));
             }
         }
         return ResponseEntity.ok(users);
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<Map<String, Object>> getUserById(@PathVariable int id) throws SQLException {
+    public ResponseEntity<Map<String, Object>> getUserById(@PathVariable String id) throws SQLException {
         try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement("SELECT id, username, email, role, created_at, updated_at FROM users WHERE id = ?")) {
-            ps.setInt(1, id);
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT id, username, email, role, created_at, updated_at FROM users WHERE id = ?")) {
+            ps.setString(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
-                    Map<String, Object> u = new HashMap<>();
-                    u.put("id", rs.getInt("id"));
-                    u.put("username", rs.getString("username"));
-                    u.put("email", rs.getString("email"));
-                    u.put("role", rs.getString("role"));
-                    u.put("created_at", rs.getLong("created_at"));
-                    u.put("updated_at", rs.getLong("updated_at"));
-                    return ResponseEntity.ok(u);
+                    return ResponseEntity.ok(mapUser(rs));
                 }
             }
         }
         throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found for id: " + id);
+    }
+
+    private static Map<String, Object> mapUser(ResultSet rs) throws SQLException {
+        Map<String, Object> u = new HashMap<>();
+        u.put("id", rs.getString("id"));
+        u.put("username", rs.getString("username"));
+        u.put("email", rs.getString("email"));
+        u.put("role", rs.getString("role"));
+        u.put("created_at", rs.getLong("created_at"));
+        long updatedAt = rs.getLong("updated_at");
+        u.put("updated_at", rs.wasNull() ? null : updatedAt);
+        return u;
     }
 }

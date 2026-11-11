@@ -221,7 +221,7 @@ class UserBootstrapTest {
     @DisplayName("GET /api/users/{id} for missing user throws 404 NOT_FOUND")
     void testGetMissingUserThrows404() {
         ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
-                userController.getUserById(99999)
+                userController.getUserById("00000000-0000-0000-0000-000000000000")
         );
         assertEquals(HttpStatus.NOT_FOUND, ex.getStatusCode());
     }

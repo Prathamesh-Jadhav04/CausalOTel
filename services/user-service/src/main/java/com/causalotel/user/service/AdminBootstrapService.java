@@ -34,10 +34,22 @@ public class AdminBootstrapService {
 
     private final DataSource dataSource;
     private final PasswordEncoder passwordEncoder;
+    private final String securityDirectory;
 
-    public AdminBootstrapService(DataSource dataSource, PasswordEncoder passwordEncoder) {
+    public AdminBootstrapService(DataSource dataSource, PasswordEncoder passwordEncoder,
+                                 @org.springframework.beans.factory.annotation.Value(
+                                         "${causalotel.bootstrap.security-dir:}") String securityDirectory) {
         this.dataSource = dataSource;
         this.passwordEncoder = passwordEncoder;
+        if (securityDirectory == null || securityDirectory.isBlank()) {
+            String localAppData = System.getenv("LOCALAPPDATA");
+            if (localAppData == null || localAppData.isBlank()) {
+                localAppData = System.getProperty("user.home") + File.separator + "AppData" + File.separator + "Local";
+            }
+            this.securityDirectory = localAppData + File.separator + "CausalOTel" + File.separator + "security";
+        } else {
+            this.securityDirectory = securityDirectory;
+        }
     }
 
     @PostConstruct
@@ -198,11 +210,7 @@ public class AdminBootstrapService {
     }
 
     private void writeTokenToSecureFile(String rawToken) {
-        String localAppData = System.getenv("LOCALAPPDATA");
-        if (localAppData == null || localAppData.isBlank()) {
-            localAppData = System.getProperty("user.home") + File.separator + "AppData" + File.separator + "Local";
-        }
-        File secDir = new File(localAppData + File.separator + "CausalOTel" + File.separator + "security");
+        File secDir = new File(securityDirectory);
         if (!secDir.exists()) {
             secDir.mkdirs();
         }
@@ -216,11 +224,7 @@ public class AdminBootstrapService {
     }
 
     private void cleanupSecureTokenFile() {
-        String localAppData = System.getenv("LOCALAPPDATA");
-        if (localAppData == null || localAppData.isBlank()) {
-            localAppData = System.getProperty("user.home") + File.separator + "AppData" + File.separator + "Local";
-        }
-        File tokenFile = new File(localAppData + File.separator + "CausalOTel" + File.separator + "security", ".bootstrap_admin_token");
+        File tokenFile = new File(securityDirectory, ".bootstrap_admin_token");
         if (tokenFile.exists()) {
             tokenFile.delete();
         }
