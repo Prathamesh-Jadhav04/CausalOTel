@@ -32,7 +32,7 @@ public class PaymentController {
 
     public record ChargeRequest(String orderId, int amountCents, String currency, String idempotencyKey) {}
     public record RefundRequest(String paymentId, int amountCents, String reason, String idempotencyKey) {}
-    public record FaultConfig(int latencyMs, String faultMode, String errorMessage) {}
+    public record FaultConfig(Integer latencyMs, String faultMode, String errorMessage) {}
 
     private String sha256(String input) {
         try {
@@ -397,7 +397,9 @@ public class PaymentController {
 
     @PostMapping("/fault")
     public ResponseEntity<Map<String, Object>> setFault(@RequestBody FaultConfig config) {
-        gatewaySimulator.setLatencyMs(config.latencyMs());
+        if (config.latencyMs() != null) {
+            gatewaySimulator.setLatencyMs(config.latencyMs());
+        }
         if (config.faultMode() != null) {
             try {
                 gatewaySimulator.setFaultMode(PaymentGatewaySimulator.FaultMode.valueOf(config.faultMode().toUpperCase()));

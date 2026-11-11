@@ -32,7 +32,7 @@ if (Test-Path $pidFile) {
             }
         }
     } catch {
-        Write-Host "    [WARN] Failed to parse $pidFile: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "    [WARN] Failed to parse ${pidFile}: $($_.Exception.Message)" -ForegroundColor Yellow
     } finally {
         Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
     }

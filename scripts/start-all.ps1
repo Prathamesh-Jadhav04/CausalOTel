@@ -6,6 +6,10 @@
     records their Process IDs to .causalotel.pids, and polls health checks until ready.
 #>
 
+param(
+    [switch]$KeepAlive
+)
+
 $ErrorActionPreference = "Continue"
 $root = Resolve-Path "$PSScriptRoot\.."
 $pidFile = Join-Path $root ".causalotel.pids"
@@ -56,34 +60,44 @@ function Start-BackgroundService {
 }
 
 # 1. User Service (Java 25, port 8081)
-Start-BackgroundService -Name "user-service" `
-    -Directory (Join-Path $root "services\user-service") `
-    -Command "cmd.exe" -Arguments "/c mvnw.cmd spring-boot:run" `
-    -Port 8081
+$userJar = Join-Path $root "services\user-service\target\user-service-1.0.0-SNAPSHOT.jar"
+if (Test-Path $userJar) {
+    Start-BackgroundService -Name "user-service" -Directory $root -Command "java" -Arguments "-jar `"$userJar`"" -Port 8081
+} else {
+    Start-BackgroundService -Name "user-service" -Directory (Join-Path $root "services\user-service") -Command "cmd.exe" -Arguments "/c mvnw.cmd spring-boot:run" -Port 8081
+}
 
 # 2. Product Service (Java 25, port 8082)
-Start-BackgroundService -Name "product-service" `
-    -Directory (Join-Path $root "services\product-service") `
-    -Command "cmd.exe" -Arguments "/c mvnw.cmd spring-boot:run" `
-    -Port 8082
+$prodJar = Join-Path $root "services\product-service\target\product-service-1.0.0-SNAPSHOT.jar"
+if (Test-Path $prodJar) {
+    Start-BackgroundService -Name "product-service" -Directory $root -Command "java" -Arguments "-jar `"$prodJar`"" -Port 8082
+} else {
+    Start-BackgroundService -Name "product-service" -Directory (Join-Path $root "services\product-service") -Command "cmd.exe" -Arguments "/c mvnw.cmd spring-boot:run" -Port 8082
+}
 
 # 3. Payment Service (Java 25, port 8084)
-Start-BackgroundService -Name "payment-service" `
-    -Directory (Join-Path $root "services\payment-service") `
-    -Command "cmd.exe" -Arguments "/c mvnw.cmd spring-boot:run" `
-    -Port 8084
+$payJar = Join-Path $root "services\payment-service\target\payment-service-1.0.0-SNAPSHOT.jar"
+if (Test-Path $payJar) {
+    Start-BackgroundService -Name "payment-service" -Directory $root -Command "java" -Arguments "-jar `"$payJar`"" -Port 8084
+} else {
+    Start-BackgroundService -Name "payment-service" -Directory (Join-Path $root "services\payment-service") -Command "cmd.exe" -Arguments "/c mvnw.cmd spring-boot:run" -Port 8084
+}
 
 # 4. Order Service (Java 25, port 8083)
-Start-BackgroundService -Name "order-service" `
-    -Directory (Join-Path $root "services\order-service") `
-    -Command "cmd.exe" -Arguments "/c mvnw.cmd spring-boot:run" `
-    -Port 8083
+$orderJar = Join-Path $root "services\order-service\target\order-service-1.0.0-SNAPSHOT.jar"
+if (Test-Path $orderJar) {
+    Start-BackgroundService -Name "order-service" -Directory $root -Command "java" -Arguments "-jar `"$orderJar`"" -Port 8083
+} else {
+    Start-BackgroundService -Name "order-service" -Directory (Join-Path $root "services\order-service") -Command "cmd.exe" -Arguments "/c mvnw.cmd spring-boot:run" -Port 8083
+}
 
 # 5. Inventory Service (.NET 10, port 5050)
-Start-BackgroundService -Name "inventory-service" `
-    -Directory (Join-Path $root "services\inventory-service") `
-    -Command "dotnet" -Arguments "run --urls http://localhost:5050" `
-    -Port 5050
+$invDll = Join-Path $root "services\inventory-service\bin\Release\net10.0\InventoryService.dll"
+if (Test-Path $invDll) {
+    Start-BackgroundService -Name "inventory-service" -Directory (Join-Path $root "services\inventory-service") -Command "dotnet" -Arguments "`"$invDll`" --urls http://localhost:5050" -Port 5050
+} else {
+    Start-BackgroundService -Name "inventory-service" -Directory (Join-Path $root "services\inventory-service") -Command "dotnet" -Arguments "run --urls http://localhost:5050" -Port 5050
+}
 
 # 6. Analysis Engine (Node 26, port 5000)
 Start-BackgroundService -Name "analysis-engine" `
@@ -145,3 +159,10 @@ Write-Host "  Payment:         http://localhost:8084/health/live" -ForegroundCol
 Write-Host "  Product:         http://localhost:8082/health/live" -ForegroundColor Cyan
 Write-Host "  User:            http://localhost:8081/health/live" -ForegroundColor Cyan
 Write-Host "`nTo stop all services, run: .\scripts\stop-all.ps1" -ForegroundColor DarkGray
+
+if ($KeepAlive) {
+    Write-Host "`n--> Services running in KeepAlive mode. Maintaining active background mesh..." -ForegroundColor Green
+    while ($true) {
+        Start-Sleep -Seconds 30
+    }
+}

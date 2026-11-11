@@ -374,11 +374,18 @@ class OrderServiceTest {
     @Test
     @DisplayName("Scenario 9: Application crashes after payment capture -> OutboxWorker recovers and confirms order")
     void testScenario9_ApplicationCrashRecoveryAfterPaymentCapture() throws SQLException {
-        String crashedOrderId = "ord-crash-999";
-        String crashedSagaId = "saga-crash-999";
+        String crashedOrderId = "ord-crash-" + UUID.randomUUID().toString().substring(0, 8);
+        String crashedSagaId = "saga-crash-" + UUID.randomUUID().toString().substring(0, 8);
         long oldTime = System.currentTimeMillis() - 10000;
 
         try (Connection conn = dataSource.getConnection()) {
+            try (PreparedStatement del1 = conn.prepareStatement("DELETE FROM saga_instances WHERE order_id = ?");
+                 PreparedStatement del2 = conn.prepareStatement("DELETE FROM orders WHERE order_id = ?")) {
+                del1.setString(1, crashedOrderId);
+                del1.executeUpdate();
+                del2.setString(1, crashedOrderId);
+                del2.executeUpdate();
+            }
             try (PreparedStatement ps = conn.prepareStatement(
                     "INSERT INTO orders (order_id, user_id, status, total_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")) {
                 ps.setString(1, crashedOrderId);

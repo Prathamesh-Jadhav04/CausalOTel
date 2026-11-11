@@ -34,6 +34,12 @@ public class OrderController {
         return ResponseEntity.ok(order);
     }
 
+    @PostMapping("/{orderId}/reconcile")
+    public ResponseEntity<Map<String, Object>> reconcile(@PathVariable String orderId) throws Exception {
+        Map<String, Object> order = sagaOrchestrator.reconcileOrder(orderId);
+        return ResponseEntity.ok(order);
+    }
+
     @GetMapping
     public ResponseEntity<List<Map<String, Object>>> getOrders() throws SQLException {
         List<Map<String, Object>> orders = new ArrayList<>();

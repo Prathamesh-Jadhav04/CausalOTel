@@ -338,6 +338,92 @@ public class SagaOrchestrator {
         }
     }
 
+    public Map<String, Object> reconcileOrder(String orderId) throws Exception {
+        String sagaId = null;
+        int totalCents = 0;
+        String currentOrderStatus = null;
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement("SELECT status, total_cents FROM orders WHERE order_id = ?")) {
+            ps.setString(1, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    currentOrderStatus = rs.getString("status");
+                    totalCents = rs.getInt("total_cents");
+                } else {
+                    throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Order not found: " + orderId);
+                }
+            }
+        }
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement("SELECT id FROM saga_instances WHERE order_id = ?")) {
+            ps.setString(1, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    sagaId = rs.getString("id");
+                }
+            }
+        }
+
+        if ("CONFIRMED".equalsIgnoreCase(currentOrderStatus)) {
+            return Map.of("orderId", orderId, "status", "CONFIRMED", "message", "Order already confirmed");
+        }
+
+        Optional<Map<String, Object>> paymentRecordOpt = downstreamClient.getPaymentByOrderId(orderId);
+        if (paymentRecordOpt.isPresent() && "CAPTURED".equalsIgnoreCase((String) paymentRecordOpt.get().get("status"))) {
+            downstreamClient.commitInventory(orderId);
+            if (sagaId != null) {
+                updateSagaState(sagaId, "COMPLETED", null);
+            }
+            updateOrderStatus(orderId, "CONFIRMED");
+            completeOutboxTaskForOrder(orderId);
+            return Map.of("orderId", orderId, "status", "CONFIRMED", "message", "Payment was confirmed CAPTURED; inventory committed");
+        }
+
+        // If not found, attempt charge with deterministic key
+        try {
+            String payIdemKey = "pay-" + orderId;
+            Map<String, Object> payResp = downstreamClient.chargePayment(orderId, totalCents, "USD", payIdemKey);
+            if ("CAPTURED".equalsIgnoreCase((String) payResp.get("status"))) {
+                downstreamClient.commitInventory(orderId);
+                if (sagaId != null) {
+                    updateSagaState(sagaId, "COMPLETED", null);
+                }
+                updateOrderStatus(orderId, "CONFIRMED");
+                completeOutboxTaskForOrder(orderId);
+                return Map.of("orderId", orderId, "status", "CONFIRMED", "message", "Payment charged successfully upon reconciliation; inventory committed");
+            }
+        } catch (Exception e) {
+            log.warn("Reconciliation charge attempt failed for order {}: {}", orderId, e.getMessage());
+            if (DownstreamServiceClient.isDefinitivePaymentDecline(e)) {
+                downstreamClient.releaseInventory(orderId, "Payment declined: " + e.getMessage());
+                if (sagaId != null) {
+                    updateSagaState(sagaId, "FAILED", "Payment declined: " + e.getMessage());
+                }
+                updateOrderStatus(orderId, "CANCELLED");
+                completeOutboxTaskForOrder(orderId);
+                return Map.of("orderId", orderId, "status", "CANCELLED", "message", "Payment declined upon reconciliation: " + e.getMessage());
+            }
+            throw e;
+        }
+
+        return Map.of("orderId", orderId, "status", currentOrderStatus, "message", "Reconciliation still indeterminate");
+    }
+
+    private void completeOutboxTaskForOrder(String orderId) {
+        long now = System.currentTimeMillis();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "UPDATE outbox_tasks SET state = 'COMPLETED', updated_at = ? WHERE payload LIKE ? AND state IN ('PENDING', 'IN_PROGRESS')")) {
+            ps.setLong(1, now);
+            ps.setString(2, "%" + orderId + "%");
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            log.warn("Failed to mark outbox tasks complete for order {}", orderId, e);
+        }
+    }
+
     public void updateOrderStatus(String orderId, String status) {
         long now = System.currentTimeMillis();
         try (Connection conn = dataSource.getConnection();

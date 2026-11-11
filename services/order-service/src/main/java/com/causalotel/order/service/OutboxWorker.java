@@ -146,8 +146,42 @@ public class OutboxWorker {
                             success = false;
                         }
                     } else {
-                        log.warn("Payment reconciliation for order {} not found yet, will retry", orderId);
-                        success = false;
+                        // Payment record not found; attempt charge now that downstream may be recovered
+                        try {
+                            Integer totalCents = (Integer) payload.get("totalCents");
+                            if (totalCents != null && totalCents > 0) {
+                                String payIdemKey = "pay-" + orderId;
+                                Map<String, Object> payResp = downstreamClient.chargePayment(orderId, totalCents, "USD", payIdemKey);
+                                if ("CAPTURED".equalsIgnoreCase((String) payResp.get("status"))) {
+                                    downstreamClient.commitInventory(orderId);
+                                    if (sagaId != null) {
+                                        sagaOrchestrator.updateSagaState(sagaId, "COMPLETED", null);
+                                    }
+                                    sagaOrchestrator.updateOrderStatus(orderId, "CONFIRMED");
+                                    log.info("Reconciled outbox task {}: payment charged successfully, order {} CONFIRMED", taskId, orderId);
+                                    success = true;
+                                }
+                            } else {
+                                downstreamClient.releaseInventory(orderId, "Payment record not found and cannot be charged");
+                                if (sagaId != null) {
+                                    sagaOrchestrator.updateSagaState(sagaId, "FAILED", "Payment not found");
+                                }
+                                sagaOrchestrator.updateOrderStatus(orderId, "CANCELLED");
+                                success = true;
+                            }
+                        } catch (Exception ex) {
+                            log.warn("Reconcile charge retry failed for order {}: {}", orderId, ex.getMessage());
+                            if (DownstreamServiceClient.isDefinitivePaymentDecline(ex)) {
+                                downstreamClient.releaseInventory(orderId, "Payment declined on retry: " + ex.getMessage());
+                                if (sagaId != null) {
+                                    sagaOrchestrator.updateSagaState(sagaId, "FAILED", "Payment declined: " + ex.getMessage());
+                                }
+                                sagaOrchestrator.updateOrderStatus(orderId, "CANCELLED");
+                                success = true;
+                            } else {
+                                success = false;
+                            }
+                        }
                     }
                 }
             } catch (Exception ex) {

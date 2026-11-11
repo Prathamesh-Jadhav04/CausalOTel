@@ -11,6 +11,7 @@
 *.key
 *.pfx
 secrets/
+.causalotel.pids
 
 # Node.js / React
 node_modules/
