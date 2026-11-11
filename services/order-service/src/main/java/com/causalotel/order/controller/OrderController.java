@@ -1,8 +1,10 @@
 package com.causalotel.order.controller;
 
+import com.causalotel.order.security.AuthPrincipal;
 import com.causalotel.order.service.SagaOrchestrator;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -28,8 +30,25 @@ public class OrderController {
         this.sagaOrchestrator = sagaOrchestrator;
     }
 
+    private static AuthPrincipal principal(Authentication authentication) {
+        if (authentication == null || !(authentication.getPrincipal() instanceof AuthPrincipal p)) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required");
+        }
+        return p;
+    }
+
     @PostMapping("/checkout")
-    public ResponseEntity<Map<String, Object>> checkout(@RequestBody SagaOrchestrator.CheckoutRequest request) throws Exception {
+    public ResponseEntity<Map<String, Object>> checkout(
+            @RequestBody SagaOrchestrator.CheckoutRequest request,
+            Authentication authentication) throws Exception {
+        AuthPrincipal caller = principal(authentication);
+        // H-02: a user may only check out for themselves. Admin/service callers
+        // may act explicitly on behalf of a user.
+        if (!caller.isAdmin() && !caller.isService()
+                && !caller.userId().equals(request.userId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Checkout userId does not match the authenticated user");
+        }
         Map<String, Object> order = sagaOrchestrator.checkout(request);
         return ResponseEntity.ok(order);
     }
@@ -41,42 +60,44 @@ public class OrderController {
     }
 
     @GetMapping
-    public ResponseEntity<List<Map<String, Object>>> getOrders() throws SQLException {
+    public ResponseEntity<List<Map<String, Object>>> getOrders(Authentication authentication)
+            throws SQLException {
+        AuthPrincipal caller = principal(authentication);
         List<Map<String, Object>> orders = new ArrayList<>();
+        String sql = "SELECT id, order_id, user_id, status, total_cents, created_at, updated_at FROM orders";
+        if (!caller.isAdmin() && !caller.isService()) {
+            sql += " WHERE user_id = ?";
+        }
+        sql += " ORDER BY created_at DESC";
+
         try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement("SELECT id, order_id, user_id, status, total_cents, created_at, updated_at FROM orders ORDER BY created_at DESC");
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                Map<String, Object> o = new HashMap<>();
-                o.put("id", rs.getInt("id"));
-                o.put("order_id", rs.getString("order_id"));
-                o.put("user_id", rs.getInt("user_id"));
-                o.put("status", rs.getString("status"));
-                o.put("total_cents", rs.getInt("total_cents"));
-                o.put("created_at", rs.getLong("created_at"));
-                o.put("updated_at", rs.getLong("updated_at"));
-                orders.add(o);
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            if (!caller.isAdmin() && !caller.isService()) {
+                ps.setString(1, caller.userId());
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    orders.add(mapOrder(rs));
+                }
             }
         }
         return ResponseEntity.ok(orders);
     }
 
     @GetMapping("/{orderId}")
-    public ResponseEntity<Map<String, Object>> getOrderByOrderId(@PathVariable String orderId) throws SQLException {
+    public ResponseEntity<Map<String, Object>> getOrderByOrderId(
+            @PathVariable String orderId, Authentication authentication) throws SQLException {
+        AuthPrincipal caller = principal(authentication);
         try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement("SELECT id, order_id, user_id, status, total_cents, created_at, updated_at FROM orders WHERE order_id = ?")) {
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT id, order_id, user_id, status, total_cents, created_at, updated_at " +
+                             "FROM orders WHERE order_id = ?")) {
             ps.setString(1, orderId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
-                    Map<String, Object> o = new HashMap<>();
-                    o.put("id", rs.getInt("id"));
-                    o.put("order_id", rs.getString("order_id"));
-                    o.put("user_id", rs.getInt("user_id"));
-                    o.put("status", rs.getString("status"));
-                    o.put("total_cents", rs.getInt("total_cents"));
-                    o.put("created_at", rs.getLong("created_at"));
-                    o.put("updated_at", rs.getLong("updated_at"));
-                    return ResponseEntity.ok(o);
+                    Map<String, Object> order = mapOrder(rs);
+                    assertOwnership(caller, (String) order.get("user_id"));
+                    return ResponseEntity.ok(order);
                 }
             }
         }
@@ -84,10 +105,15 @@ public class OrderController {
     }
 
     @GetMapping("/{orderId}/items")
-    public ResponseEntity<List<Map<String, Object>>> getOrderItems(@PathVariable String orderId) throws SQLException {
+    public ResponseEntity<List<Map<String, Object>>> getOrderItems(
+            @PathVariable String orderId, Authentication authentication) throws SQLException {
+        AuthPrincipal caller = principal(authentication);
+        assertOrderOwnership(caller, orderId);
+
         List<Map<String, Object>> items = new ArrayList<>();
         try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement("SELECT id, order_id, sku, quantity, price_cents FROM order_items WHERE order_id = ?")) {
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT id, order_id, sku, quantity, price_cents FROM order_items WHERE order_id = ?")) {
             ps.setString(1, orderId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -105,9 +131,15 @@ public class OrderController {
     }
 
     @GetMapping("/{orderId}/saga")
-    public ResponseEntity<Map<String, Object>> getSagaInstance(@PathVariable String orderId) throws SQLException {
+    public ResponseEntity<Map<String, Object>> getSagaInstance(
+            @PathVariable String orderId, Authentication authentication) throws SQLException {
+        AuthPrincipal caller = principal(authentication);
+        assertOrderOwnership(caller, orderId);
+
         try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement("SELECT id, order_id, current_state, error_reason, created_at, updated_at FROM saga_instances WHERE order_id = ?")) {
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT id, order_id, current_state, error_reason, created_at, updated_at " +
+                             "FROM saga_instances WHERE order_id = ?")) {
             ps.setString(1, orderId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
@@ -122,14 +154,17 @@ public class OrderController {
                 }
             }
         }
-        throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Saga instance not found for orderId: " + orderId);
+        throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                "Saga instance not found for orderId: " + orderId);
     }
 
     @GetMapping("/outbox")
     public ResponseEntity<List<Map<String, Object>>> getOutboxTasks() throws SQLException {
         List<Map<String, Object>> tasks = new ArrayList<>();
         try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement("SELECT id, saga_id, task_type, payload, state, worker_id, retries, created_at, updated_at FROM outbox_tasks ORDER BY created_at DESC LIMIT 50");
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT id, saga_id, task_type, payload, state, worker_id, retries, created_at, " +
+                             "updated_at FROM outbox_tasks ORDER BY created_at DESC LIMIT 50");
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 Map<String, Object> t = new HashMap<>();
@@ -146,5 +181,40 @@ public class OrderController {
             }
         }
         return ResponseEntity.ok(tasks);
+    }
+
+    private static Map<String, Object> mapOrder(ResultSet rs) throws SQLException {
+        Map<String, Object> o = new HashMap<>();
+        o.put("id", rs.getInt("id"));
+        o.put("order_id", rs.getString("order_id"));
+        o.put("user_id", rs.getString("user_id"));
+        o.put("status", rs.getString("status"));
+        o.put("total_cents", rs.getInt("total_cents"));
+        o.put("created_at", rs.getLong("created_at"));
+        o.put("updated_at", rs.getLong("updated_at"));
+        return o;
+    }
+
+    private static void assertOwnership(AuthPrincipal caller, String ownerUserId) {
+        if (!caller.isAdmin() && !caller.isService()
+                && (ownerUserId == null || !ownerUserId.equals(caller.userId()))) {
+            // 404 avoids leaking the existence of another user's order.
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Order not found");
+        }
+    }
+
+    private void assertOrderOwnership(AuthPrincipal caller, String orderId) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT user_id FROM orders WHERE order_id = ?")) {
+            ps.setString(1, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                            "Order not found for orderId: " + orderId);
+                }
+                assertOwnership(caller, rs.getString("user_id"));
+            }
+        }
     }
 }

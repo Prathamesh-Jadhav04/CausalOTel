@@ -1,16 +1,20 @@
 package com.causalotel.order.client;
 
+import com.causalotel.order.security.TokenService;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 public class DownstreamServiceClient {
@@ -20,18 +24,45 @@ public class DownstreamServiceClient {
     private final RestClient restClient;
     private final String inventoryUrl;
     private final String paymentUrl;
+    private final String productUrl;
+    private final TokenService tokenService;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public DownstreamServiceClient(
             @Value("${services.inventory.url:http://localhost:5050}") String inventoryUrl,
-            @Value("${services.payment.url:http://localhost:8084}") String paymentUrl) {
+            @Value("${services.payment.url:http://localhost:8084}") String paymentUrl,
+            @Value("${services.product.url:http://localhost:8082}") String productUrl,
+            @Value("${services.downstream.connect-timeout-ms:2000}") int connectTimeoutMs,
+            @Value("${services.downstream.read-timeout-ms:5000}") int readTimeoutMs,
+            TokenService tokenService) {
         this.inventoryUrl = inventoryUrl;
         this.paymentUrl = paymentUrl;
-        this.restClient = RestClient.builder().build();
+        this.productUrl = productUrl;
+        this.tokenService = tokenService;
+
+        // H-09: a downstream dependency that accepts a connection but never
+        // responds must not pin an order-service servlet thread forever.
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(Duration.ofMillis(connectTimeoutMs));
+        requestFactory.setReadTimeout(Duration.ofMillis(readTimeoutMs));
+        this.restClient = RestClient.builder()
+                .requestFactory(requestFactory)
+                .build();
+    }
+
+    /** Test constructor without a security context. */
+    public DownstreamServiceClient(String inventoryUrl, String paymentUrl, String productUrl,
+                                   int connectTimeoutMs, int readTimeoutMs) {
+        this(inventoryUrl, paymentUrl, productUrl, connectTimeoutMs, readTimeoutMs, null);
     }
 
     private HttpHeaders buildTracingHeaders() {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
+        // H-02: service-to-service calls carry a short-lived signed service token.
+        if (tokenService != null) {
+            headers.setBearerAuth(tokenService.issueServiceToken());
+        }
         try {
             SpanContext spanContext = Span.current().getSpanContext();
             if (spanContext.isValid()) {
@@ -47,6 +78,26 @@ public class DownstreamServiceClient {
             log.warn("Failed to extract active span for trace propagation: {}", t.getMessage());
         }
         return headers;
+    }
+
+    /**
+     * Resolve the authoritative catalog record for a SKU. A 404 is a normal
+     * business outcome (unknown/unpurchasable SKU), not an infrastructure error.
+     */
+    public Optional<Map<String, Object>> getProductBySku(String sku) {
+        String url = productUrl + "/api/products/" + sku;
+        log.info("Querying Product Service catalog for sku={}", sku);
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> resp = restClient.get()
+                    .uri(url)
+                    .headers(h -> h.addAll(buildTracingHeaders()))
+                    .retrieve()
+                    .body(Map.class);
+            return Optional.ofNullable(resp);
+        } catch (org.springframework.web.client.HttpClientErrorException.NotFound e) {
+            return Optional.empty();
+        }
     }
 
     public Map<String, Object> reserveInventory(String orderId, List<Map<String, Object>> items) {

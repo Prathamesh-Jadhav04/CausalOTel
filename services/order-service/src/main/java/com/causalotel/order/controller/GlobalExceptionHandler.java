@@ -30,6 +30,30 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    @ExceptionHandler(com.causalotel.order.service.SagaOrchestrator.SagaLeaseLostException.class)
+    public ProblemDetail handleLeaseLost(com.causalotel.order.service.SagaOrchestrator.SagaLeaseLostException ex) {
+        log.warn("Saga ownership conflict: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        problem.setType(URI.create("https://causalotel.io/errors/409"));
+        problem.setProperty("code", "SAGA_LEASE_LOST");
+        problem.setProperty("timestamp", Instant.now().toEpochMilli());
+        attachTraceIdIfValid(problem);
+        return problem;
+    }
+
+    @ExceptionHandler(com.causalotel.order.service.SagaOrchestrator.SagaPersistenceException.class)
+    public ProblemDetail handleSagaPersistence(
+            com.causalotel.order.service.SagaOrchestrator.SagaPersistenceException ex) {
+        log.error("Saga persistence failure: {}", ex.getMessage(), ex);
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
+                "The order state could not be durably persisted. No success was reported.");
+        problem.setType(URI.create("https://causalotel.io/errors/503"));
+        problem.setProperty("code", "SAGA_PERSISTENCE_FAILURE");
+        problem.setProperty("timestamp", Instant.now().toEpochMilli());
+        attachTraceIdIfValid(problem);
+        return problem;
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ProblemDetail handleValidationException(MethodArgumentNotValidException ex) {
         log.warn("Validation failure on request: {}", ex.getMessage());
