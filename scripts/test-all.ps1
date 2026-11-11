@@ -180,6 +180,11 @@ try {
     Run-Suite -Name "Analysis Engine (Node.js 26)" -Directory (Join-Path $root "analysis-engine") -Command {
         & npm.cmd test
     }
+
+    # 7. Dashboard contract tests (Node 26)
+    Run-Suite -Name "Dashboard Contracts (Node.js 26)" -Directory (Join-Path $root "dashboard") -Command {
+        & npm.cmd test
+    }
 } finally {
     Remove-Item Env:SQLITE_DB_PATH -ErrorAction SilentlyContinue
 }
@@ -224,7 +229,7 @@ if ($totalFailed -gt 0) {
     exit 1
 }
 
-Write-Host "`n[SUCCESS] All 6 test suites PASSED and live databases are unchanged." -ForegroundColor Green
+Write-Host "`n[SUCCESS] All 7 test suites PASSED and live databases are unchanged." -ForegroundColor Green
 Write-Host "Test artifacts: $testRoot" -ForegroundColor DarkGray
 if (-not $KeepTestArtifacts) {
     Write-Host "Artifacts are retained for evidence; remove the directory manually when no longer needed." -ForegroundColor DarkGray

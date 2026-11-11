@@ -6,12 +6,12 @@ import {
   GitFork, 
   Layers, 
   AlertTriangle, 
-  Search, 
   BarChart3, 
   Zap, 
   Settings,
   ShieldCheck
 } from 'lucide-react';
+import { useAuth } from '../lib/AuthContext.jsx';
 
 const navItems = [
   { path: '/', label: 'Overview', icon: Activity },
@@ -25,6 +25,8 @@ const navItems = [
 ];
 
 export default function Sidebar() {
+  const { session } = useAuth();
+
   return (
     <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col h-screen select-none">
       <div className="h-16 flex items-center px-6 gap-3 border-b border-slate-800">
@@ -62,8 +64,10 @@ export default function Sidebar() {
 
       <div className="p-4 border-t border-slate-800">
         <div className="flex items-center gap-2 px-2 py-1.5 bg-slate-800/40 rounded-lg border border-slate-700/50">
-          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-          <span className="text-xs text-slate-300 font-mono">Agent: Online (Windows Host)</span>
+          <span className="w-2.5 h-2.5 rounded-full bg-indigo-400"></span>
+          <span className="text-xs text-slate-300 font-mono truncate">
+            {session ? `${session.username} (${session.role.replace('ROLE_', '')})` : 'Signed out'}
+          </span>
         </div>
       </div>
     </aside>

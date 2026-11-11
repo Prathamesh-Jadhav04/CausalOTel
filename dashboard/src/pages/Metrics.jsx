@@ -1,183 +1,148 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
-import { 
-  BarChart3, 
-  Activity, 
-  Clock, 
-  Server, 
-  AlertTriangle, 
-  CheckCircle2, 
-  TrendingUp, 
-  Zap,
-  RefreshCw
+import React, { useEffect, useState } from 'react';
+import {
+  BarChart3,
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  RefreshCw,
+  TrendingUp,
+  Clock,
+  Database
 } from 'lucide-react';
+import api from '../lib/api.js';
+import { describeApiError, normalizeMetricsResponse } from '../lib/contracts.js';
 
-const mockMetrics = [
-  {
-    service: 'user-service',
-    port: 8081,
-    rps: 42,
-    p50: '3ms',
-    p95: '7ms',
-    p99: '14ms',
-    errorRate: 0.0,
-    dbConnections: 3,
-    status: 'HEALTHY'
-  },
-  {
-    service: 'product-service',
-    port: 8082,
-    rps: 88,
-    p50: '5ms',
-    p95: '12ms',
-    p99: '21ms',
-    errorRate: 0.0,
-    dbConnections: 4,
-    status: 'HEALTHY'
-  },
-  {
-    service: 'order-service',
-    port: 8083,
-    rps: 34,
-    p50: '14ms',
-    p95: '45ms',
-    p99: '110ms',
-    errorRate: 1.2,
-    dbConnections: 5,
-    status: 'HEALTHY'
-  },
-  {
-    service: 'payment-service',
-    port: 8084,
-    rps: 28,
-    p50: '18ms',
-    p95: '120ms',
-    p99: '3250ms',
-    errorRate: 4.8,
-    dbConnections: 3,
-    status: 'DEGRADED'
-  },
-  {
-    service: 'inventory-service',
-    port: 5050,
-    rps: 56,
-    p50: '6ms',
-    p95: '15ms',
-    p99: '28ms',
-    errorRate: 0.5,
-    dbConnections: 4,
-    status: 'HEALTHY'
-  },
-  {
-    service: 'analysis-engine',
-    port: 5000,
-    rps: 16,
-    p50: '8ms',
-    p95: '22ms',
-    p99: '42ms',
-    errorRate: 0.0,
-    dbConnections: 1,
-    status: 'HEALTHY'
-  }
-];
+function formatLatency(value) {
+  return value === null || value === undefined ? '—' : `${value} ms`;
+}
+
+function formatRate(value) {
+  return value === null || value === undefined ? '—' : value.toFixed(2);
+}
+
+function formatPercent(value) {
+  return value === null || value === undefined ? '—' : `${(value * 100).toFixed(2)}%`;
+}
 
 export default function Metrics() {
-  const [metrics, setMetrics] = useState(mockMetrics);
+  const [metrics, setMetrics] = useState(null);
+  const [error, setError] = useState(null);
   const [selectedService, setSelectedService] = useState('ALL');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchMetrics();
-  }, []);
-
-  const fetchMetrics = async () => {
+  const load = async () => {
     setLoading(true);
     try {
-      const resp = await axios.get('/api/analysis/metrics');
-      if (resp.data && Array.isArray(resp.data)) {
-        setMetrics(resp.data);
-      }
-    } catch {
-      // Use fallback
+      const response = await api.get('/api/analysis/metrics');
+      setMetrics(normalizeMetricsResponse(response.data));
+      setError(null);
+    } catch (err) {
+      setMetrics(null);
+      setError(describeApiError(err));
     } finally {
       setLoading(false);
     }
   };
 
-  const displayedMetrics = selectedService === 'ALL'
-    ? metrics
-    : metrics.filter((m) => m.service === selectedService);
+  useEffect(() => {
+    load();
+  }, []);
 
-  const totalRps = metrics.reduce((acc, m) => acc + m.rps, 0);
-  const avgErrorRate = (metrics.reduce((acc, m) => acc + m.errorRate, 0) / metrics.length).toFixed(2);
+  const services = metrics?.services || [];
+  const displayedMetrics = selectedService === 'ALL'
+    ? services
+    : services.filter(service => service.service === selectedService);
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-slate-100 tracking-tight">System Metrics</h2>
           <p className="text-sm text-slate-400 mt-1">
-            Real-time throughput, latency percentiles, error rates, and connection pool saturation.
+            Live PromQL results from Prometheus. Services without samples are shown as unavailable, never estimated.
           </p>
         </div>
         <button
-          onClick={fetchMetrics}
+          onClick={load}
           disabled={loading}
-          className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 transition shadow-sm"
+          className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 transition shadow-sm"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           {loading ? 'Refreshing...' : 'Refresh Metrics'}
         </button>
       </div>
 
-      {/* High-Level Stat Cards */}
+      {error && (
+        <div className="p-4 bg-rose-950/30 border border-rose-800 rounded-xl text-xs text-rose-300 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <div>
+            <div className="font-semibold">Prometheus unavailable ({error.code || 'PROMETHEUS_UNAVAILABLE'})</div>
+            <div className="mt-1">{error.detail}</div>
+            <div className="mt-1 text-rose-400/80">
+              Start Prometheus and verify the scrape targets before trusting any metric view.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {metrics && (
+        <div className="flex items-center gap-4 text-xs text-slate-400 font-mono">
+          <span>source: {metrics.source}</span>
+          <span>window: {metrics.window || '—'}</span>
+          <span>generated: {metrics.generatedAt ? new Date(metrics.generatedAt).toLocaleString() : '—'}</span>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
+        <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
+          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Reporting Services</div>
+          <div className="text-2xl font-bold text-slate-100 mt-2 flex items-baseline gap-1.5">
+            <span>{metrics ? `${metrics.reportingCount} / ${metrics.totalCount}` : '—'}</span>
+          </div>
+          <div className="text-xs text-slate-400 mt-2 flex items-center gap-1">
+            <Database className="w-3.5 h-3.5" />
+            Services with real Prometheus samples
+          </div>
+        </div>
+
         <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Throughput</div>
           <div className="text-2xl font-bold text-slate-100 mt-2 flex items-baseline gap-1.5">
-            <span>{totalRps}</span>
+            <span>{formatRate(metrics?.totalRequestRate)}</span>
             <span className="text-xs text-slate-400 font-normal">req/s</span>
           </div>
-          <div className="text-xs text-emerald-400 mt-2 flex items-center gap-1">
+          <div className="text-xs text-slate-400 mt-2 flex items-center gap-1">
             <TrendingUp className="w-3.5 h-3.5" />
-            +8.2% from last hour
+            Sum of reporting services
           </div>
         </div>
 
         <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Average Error Rate</div>
-          <div className="text-2xl font-bold text-rose-400 mt-2">
-            {avgErrorRate}%
+          <div className={`text-2xl font-bold mt-2 ${
+            metrics?.averageErrorRate > 0.05 ? 'text-rose-400' : 'text-emerald-400'
+          }`}>
+            {formatPercent(metrics?.averageErrorRate)}
           </div>
           <div className="text-xs text-slate-400 mt-2">
-            Payment gateway anomalies detected
+            Mean of reporting services
           </div>
         </div>
 
         <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
-          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">P99 Mesh Latency</div>
-          <div className="text-2xl font-bold text-amber-400 mt-2">
-            3,250 ms
+          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Worst P99 Latency</div>
+          <div className={`text-2xl font-bold mt-2 ${
+            metrics?.worstP99LatencyMs > 500 ? 'text-amber-400' : 'text-slate-100'
+          }`}>
+            {formatLatency(metrics?.worstP99LatencyMs)}
           </div>
-          <div className="text-xs text-amber-400/80 mt-2 flex items-center gap-1">
-            <AlertTriangle className="w-3.5 h-3.5" />
-            Breaching 500ms SLA target
-          </div>
-        </div>
-
-        <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
-          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Active DB Pools</div>
-          <div className="text-2xl font-bold text-emerald-400 mt-2">
-            21 / 30
-          </div>
-          <div className="text-xs text-slate-400 mt-2">
-            SQLite WAL mode active across 5 services
+          <div className="text-xs text-slate-400 mt-2 flex items-center gap-1">
+            <Clock className="w-3.5 h-3.5" />
+            Highest P99 among reporting services
           </div>
         </div>
       </div>
 
-      {/* Filter by service */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1">
         <span className="text-xs text-slate-400 font-medium whitespace-nowrap">Filter Service:</span>
         <button
@@ -190,74 +155,105 @@ export default function Metrics() {
         >
           All Services
         </button>
-        {metrics.map((m) => (
+        {services.map((service) => (
           <button
-            key={m.service}
-            onClick={() => setSelectedService(m.service)}
+            key={service.service}
+            onClick={() => setSelectedService(service.service)}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium font-mono whitespace-nowrap transition ${
-              selectedService === m.service
+              selectedService === service.service
                 ? 'bg-indigo-600 text-white shadow'
                 : 'bg-slate-800 text-slate-400 hover:text-slate-200'
             }`}
           >
-            {m.service}
+            {service.service}
           </button>
         ))}
       </div>
 
-      {/* Service Metrics Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {displayedMetrics.map((svc) => (
+        {displayedMetrics.map((service) => (
           <div
-            key={svc.service}
+            key={service.service}
             className="bg-slate-900 border border-slate-800 rounded-xl p-5 hover:border-slate-700 transition shadow-sm space-y-4"
           >
             <div className="flex items-start justify-between">
               <div>
-                <h3 className="font-mono font-semibold text-slate-100 text-base">{svc.service}</h3>
-                <span className="text-xs text-indigo-400 font-mono">Port :{svc.port}</span>
+                <h3 className="font-mono font-semibold text-slate-100 text-base">{service.service}</h3>
+                <span className="text-xs text-indigo-400 font-mono">
+                  {service.port === null ? 'port unknown' : `Port :${service.port}`}
+                </span>
               </div>
               <span
                 className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                  svc.status === 'HEALTHY'
-                    ? 'bg-emerald-950/60 border border-emerald-800 text-emerald-300'
-                    : 'bg-rose-950/80 border border-rose-800 text-rose-300 animate-pulse'
+                  !service.available
+                    ? 'bg-slate-800 border border-slate-700 text-slate-400'
+                    : service.status === 'HEALTHY'
+                      ? 'bg-emerald-950/60 border border-emerald-800 text-emerald-300'
+                      : 'bg-rose-950/80 border border-rose-800 text-rose-300'
                 }`}
               >
-                {svc.status}
+                {service.available ? service.status : 'UNAVAILABLE'}
               </span>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 py-3 border-y border-slate-800 text-xs">
-              <div>
-                <div className="text-slate-500">RPS:</div>
-                <div className="text-slate-200 font-semibold font-mono text-sm mt-0.5">{svc.rps} req/s</div>
+            {!service.available ? (
+              <div className="py-4 border-y border-slate-800 text-xs text-slate-400 space-y-1">
+                <div className="flex items-center gap-1.5 text-amber-400 font-medium">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  No metric samples
+                </div>
+                <div className="font-mono text-[11px] text-slate-500">reason: {service.reason || 'NO_METRICS'}</div>
               </div>
-              <div>
-                <div className="text-slate-500">Error Rate:</div>
-                <div className={`font-semibold font-mono text-sm mt-0.5 ${svc.errorRate > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                  {svc.errorRate}%
+            ) : (
+              <div className="grid grid-cols-2 gap-3 py-3 border-y border-slate-800 text-xs">
+                <div>
+                  <div className="text-slate-500">Request rate</div>
+                  <div className="text-slate-200 font-semibold font-mono text-sm mt-0.5">
+                    {formatRate(service.requestRate)} req/s
+                  </div>
+                </div>
+                <div>
+                  <div className="text-slate-500">Error rate</div>
+                  <div className={`font-semibold font-mono text-sm mt-0.5 ${
+                    service.errorRate > 0 ? 'text-rose-400' : 'text-emerald-400'
+                  }`}>
+                    {formatPercent(service.errorRate)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-slate-500">P50 latency</div>
+                  <div className="text-slate-300 font-mono mt-0.5">{formatLatency(service.p50LatencyMs)}</div>
+                </div>
+                <div>
+                  <div className="text-slate-500">P95 latency</div>
+                  <div className="text-slate-300 font-mono mt-0.5">{formatLatency(service.p95LatencyMs)}</div>
+                </div>
+                <div>
+                  <div className="text-slate-500">P99 latency</div>
+                  <div className={`font-mono font-semibold mt-0.5 ${
+                    service.p99LatencyMs > 500 ? 'text-amber-400' : 'text-slate-300'
+                  }`}>
+                    {formatLatency(service.p99LatencyMs)}
+                  </div>
                 </div>
               </div>
-              <div>
-                <div className="text-slate-500">P50 Latency:</div>
-                <div className="text-slate-300 font-mono mt-0.5">{svc.p50}</div>
-              </div>
-              <div>
-                <div className="text-slate-500">P99 Latency:</div>
-                <div className={`font-mono font-semibold mt-0.5 ${parseInt(svc.p99) > 500 ? 'text-amber-400' : 'text-slate-300'}`}>
-                  {svc.p99}
-                </div>
-              </div>
-            </div>
+            )}
 
             <div className="flex items-center justify-between text-xs text-slate-400">
-              <span>SQLite Active Conns:</span>
-              <span className="font-mono text-slate-200 font-semibold">{svc.dbConnections}</span>
+              <span>Source</span>
+              <span className="font-mono text-slate-300">Prometheus</span>
             </div>
           </div>
         ))}
       </div>
+
+      {!loading && !error && services.length === 0 && (
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-12 text-center text-slate-400">
+          <BarChart3 className="w-8 h-8 text-slate-500 mx-auto mb-2" />
+          <p className="text-base font-medium text-slate-300">No services reported</p>
+          <p className="text-xs text-slate-500 mt-1">Prometheus returned an empty service set.</p>
+        </div>
+      )}
     </div>
   );
 }
