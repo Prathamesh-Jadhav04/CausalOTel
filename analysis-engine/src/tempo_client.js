@@ -2,40 +2,122 @@
  * Tempo Distributed Trace Client.
  * Queries Tempo HTTP API on port 3200 (or configured TEMPO_URL), normalizes span hierarchy,
  * and executes Sweep-Line interval union to calculate true span self-times.
+ *
+ * Tempo failures are never converted into synthetic traces on the normal path.
+ * Callers receive a typed TempoError with a machine-readable code so the API can
+ * return 404 (unknown trace) or 502/503 (Tempo unavailable/invalid response).
  */
 
 import { computeIntervalUnion } from './cpp_bridge.js';
 
+export class TempoError extends Error {
+  constructor(message, { status = 502, code = 'TEMPO_ERROR', cause } = {}) {
+    super(message, cause ? { cause } : undefined);
+    this.name = 'TempoError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+const TRACE_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+
+export function validateTraceId(traceId) {
+  if (typeof traceId !== 'string' || traceId.length === 0) {
+    throw new TempoError('traceId is required', { status: 400, code: 'INVALID_TRACE_ID' });
+  }
+  if (traceId.length > 128 || !TRACE_ID_PATTERN.test(traceId)) {
+    throw new TempoError('traceId has an invalid format', { status: 400, code: 'INVALID_TRACE_ID' });
+  }
+  return traceId;
+}
+
 export class TempoClient {
-  constructor(baseUrl = process.env.TEMPO_URL || 'http://localhost:3200') {
+  constructor(baseUrl = process.env.TEMPO_URL || 'http://localhost:3200', options = {}) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.timeoutMs = options.timeoutMs || parseInt(process.env.TEMPO_TIMEOUT_MS, 10) || 3000;
+  }
+
+  async _request(pathname) {
+    let response;
+    try {
+      response = await fetch(`${this.baseUrl}${pathname}`, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(this.timeoutMs)
+      });
+    } catch (err) {
+      const code = err?.name === 'TimeoutError' || err?.name === 'AbortError'
+        ? 'TEMPO_TIMEOUT'
+        : 'TEMPO_UNAVAILABLE';
+      throw new TempoError(
+        code === 'TEMPO_TIMEOUT' ? 'Tempo request timed out' : 'Tempo is unavailable',
+        { status: 503, code, cause: err }
+      );
+    }
+
+    if (response.status === 404) {
+      throw new TempoError('Trace not found', { status: 404, code: 'TRACE_NOT_FOUND' });
+    }
+    if (response.status === 400) {
+      throw new TempoError('Tempo rejected the trace request', { status: 400, code: 'INVALID_TRACE_ID' });
+    }
+    if (!response.ok) {
+      throw new TempoError(`Tempo returned HTTP ${response.status}`, {
+        status: 502,
+        code: 'TEMPO_ERROR'
+      });
+    }
+
+    try {
+      return await response.json();
+    } catch (err) {
+      throw new TempoError('Tempo returned malformed JSON', {
+        status: 502,
+        code: 'TEMPO_INVALID_RESPONSE',
+        cause: err
+      });
+    }
   }
 
   async fetchTrace(traceId) {
-    const url = `${this.baseUrl}/api/traces/${traceId}`;
-    try {
-      const response = await fetch(url, {
-        headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout(3000)
-      });
+    const safeTraceId = validateTraceId(traceId);
+    const data = await this._request(`/api/traces/${encodeURIComponent(safeTraceId)}`);
+    const trace = this.normalizeTrace(data);
 
-      if (!response.ok) {
-        throw new Error(`Tempo returned HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      return this.normalizeTrace(data);
-    } catch (err) {
-      // In standalone test or demo without running Tempo container, generate synthesized trace
-      return this.synthesizeTraceForDemo(traceId, err.message);
+    if (!trace.spans.length) {
+      throw new TempoError('Trace contains no spans', { status: 404, code: 'TRACE_NOT_FOUND' });
     }
+
+    return {
+      ...trace,
+      synthetic: false,
+      source: 'tempo'
+    };
+  }
+
+  /**
+   * Search recent traces. Tempo's search API is the only trace-list source;
+   * when Tempo is down this throws rather than returning fabricated rows.
+   */
+  async listTraces(limit = 20) {
+    const boundedLimit = Math.max(1, Math.min(100, Number.parseInt(limit, 10) || 20));
+    const data = await this._request(`/api/search?limit=${boundedLimit}`);
+    const traces = Array.isArray(data?.traces) ? data.traces : [];
+
+    return traces.map(t => ({
+      traceId: t.traceID || t.traceId,
+      rootService: t.rootServiceName || 'unknown',
+      rootOperation: t.rootTraceName || 'unknown',
+      startTimeUnixNano: t.startTimeUnixNano || null,
+      durationMs: Number(t.durationMs) || 0,
+      status: t.status || 'UNKNOWN'
+    }));
   }
 
   normalizeTrace(rawTempoData) {
     const flatSpans = [];
 
     // Parse OTLP/Tempo JSON batches
-    const batches = rawTempoData.batches || [];
+    const batches = rawTempoData?.batches || [];
     for (const batch of batches) {
       const serviceName = batch.resource?.attributes?.find(a => a.key === 'service.name')?.value?.stringValue || 'unknown-service';
       const scopeSpans = batch.scopeSpans || batch.instrumentationLibrarySpans || [];
@@ -50,7 +132,7 @@ export class TempoClient {
           const attributes = {};
           if (Array.isArray(s.attributes)) {
             for (const attr of s.attributes) {
-              const val = attr.value?.stringValue || attr.value?.intValue || attr.value?.boolValue || attr.value?.doubleValue || JSON.stringify(attr.value);
+              const val = attr.value?.stringValue ?? attr.value?.intValue ?? attr.value?.boolValue ?? attr.value?.doubleValue ?? JSON.stringify(attr.value);
               attributes[attr.key] = val;
             }
           }
@@ -133,6 +215,10 @@ export class TempoClient {
     };
   }
 
+  /**
+   * Explicitly opt-in demo fixture. This is never used by fetchTrace and must
+   * never be persisted as a real incident or fed into RCA scoring.
+   */
   synthesizeTraceForDemo(traceId, reason = 'Tempo offline') {
     const baseTime = Date.now() - 60000;
     const spans = [
@@ -195,8 +281,13 @@ export class TempoClient {
     ];
 
     const tree = this.buildSpanTreeAndSelfTimes(spans);
-    tree.offlineNotice = reason;
-    return tree;
+    return {
+      ...tree,
+      synthetic: true,
+      source: 'demo',
+      syntheticReason: reason,
+      offlineNotice: reason
+    };
   }
 }
 

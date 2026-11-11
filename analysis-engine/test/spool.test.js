@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { IncidentSpool } from '../src/spool.js';
+import { IncidentSpool, SpoolValidationError, validateIncidentId } from '../src/spool.js';
 
 describe('IncidentSpool Tests', () => {
     let testSpoolDir;
@@ -110,5 +110,82 @@ describe('IncidentSpool Tests', () => {
 
         await spool.acknowledgeIncident(savedPath);
         assert.equal(fs.existsSync(savedPath), false, 'Acknowledged file should be deleted');
+    });
+
+    test('Rejects traversal, absolute paths, NUL bytes, and overlong IDs', async () => {
+        const cases = [
+            '../escape',
+            '..\\escape',
+            'x/../../escaped',
+            'x\\..\\..\\escaped',
+            '/tmp/evil',
+            'C:\\temp\\evil',
+            'a\0b',
+            '.',
+            '..',
+            'a'.repeat(129)
+        ];
+
+        for (const incidentId of cases) {
+            await assert.rejects(
+                spool.spoolIncident(incidentId, { probe: true }),
+                err => err instanceof SpoolValidationError && err.status === 400,
+                `expected validation failure for ${JSON.stringify(incidentId)}`
+            );
+        }
+
+        const files = await fs.promises.readdir(testSpoolDir);
+        assert.deepEqual(files.filter(f => f.endsWith('.json')), []);
+    });
+
+    test('Resolved spool paths always stay contained for random valid IDs', async () => {
+        const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-';
+        for (let i = 0; i < 50; i += 1) {
+            const id = Array.from({ length: 1 + (i % 40) }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+            if (id === '.' || id === '..') continue;
+            const saved = await spool.spoolIncident(id, { i });
+            const resolved = path.resolve(saved);
+            assert.ok(
+                resolved.startsWith(path.resolve(testSpoolDir) + path.sep),
+                `path must be contained: ${resolved}`
+            );
+        }
+    });
+
+    test('Valid UUID still spools and is readable', async () => {
+        const incidentId = '123e4567-e89b-12d3-a456-426614174000';
+        const saved = await spool.spoolIncident(incidentId, { ok: true });
+        const parsed = await spool.readIncident(saved);
+        assert.equal(parsed.incidentId, incidentId);
+        assert.deepEqual(parsed.data, { ok: true });
+        assert.equal(validateIncidentId(incidentId), incidentId);
+    });
+
+    test('Read and acknowledge refuse paths outside the spool root', async () => {
+        const outside = path.join(os.tmpdir(), `causalotel-outside-${Date.now()}.json`);
+        await fs.promises.writeFile(outside, JSON.stringify({ incidentId: 'outside' }), 'utf8');
+
+        try {
+            await assert.rejects(
+                spool.readIncident(outside),
+                err => err instanceof SpoolValidationError && err.code === 'SPOOL_PATH_ESCAPE'
+            );
+            await assert.rejects(
+                spool.acknowledgeIncident(outside),
+                err => err instanceof SpoolValidationError && err.code === 'SPOOL_PATH_ESCAPE'
+            );
+            assert.equal(fs.existsSync(outside), true, 'outside file must not be deleted');
+        } finally {
+            await fs.promises.unlink(outside).catch(() => {});
+        }
+    });
+
+    test('Quarantine moves a corrupt file into a contained subdirectory', async () => {
+        const corrupt = path.join(testSpoolDir, '9999999999999_inc-corrupt.json');
+        await fs.promises.writeFile(corrupt, '{not json', 'utf8');
+        const quarantined = await spool.quarantineIncident(corrupt, 'invalid json');
+        assert.equal(fs.existsSync(corrupt), false);
+        assert.ok(fs.existsSync(quarantined));
+        assert.ok(path.resolve(quarantined).startsWith(path.resolve(testSpoolDir) + path.sep));
     });
 });
