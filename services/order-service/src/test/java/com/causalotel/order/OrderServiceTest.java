@@ -6,6 +6,7 @@ import com.causalotel.order.controller.OrderController;
 import com.causalotel.order.security.AuthPrincipal;
 import com.causalotel.order.service.OutboxWorker;
 import com.causalotel.order.service.SagaOrchestrator;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -73,6 +74,9 @@ class OrderServiceTest {
 
     @Autowired
     private DataSource dataSource;
+
+    @Autowired
+    private MeterRegistry meterRegistry;
 
     @DynamicPropertySource
     static void isolatedDatabase(DynamicPropertyRegistry registry) {
@@ -598,6 +602,12 @@ class OrderServiceTest {
 
     private void insertSagaFixture(String orderId, String sagaId, String state,
                                    String leaseOwner, long leaseExpiresAt) throws SQLException {
+        insertSagaFixture(orderId, sagaId, state, leaseOwner, leaseExpiresAt, 0);
+    }
+
+    private void insertSagaFixture(String orderId, String sagaId, String state,
+                                   String leaseOwner, long leaseExpiresAt,
+                                   int commitAttempts) throws SQLException {
         long now = System.currentTimeMillis();
         try (Connection conn = dataSource.getConnection()) {
             try (PreparedStatement ps = conn.prepareStatement(
@@ -613,7 +623,8 @@ class OrderServiceTest {
             }
             try (PreparedStatement ps = conn.prepareStatement(
                     "INSERT INTO saga_instances (id, order_id, current_state, error_reason, created_at, " +
-                            "updated_at, lease_owner, lease_expires_at, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+                            "updated_at, lease_owner, lease_expires_at, version, commit_attempts) " +
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
                 ps.setString(1, sagaId);
                 ps.setString(2, orderId);
                 ps.setString(3, state);
@@ -623,6 +634,7 @@ class OrderServiceTest {
                 ps.setString(7, leaseOwner);
                 ps.setLong(8, leaseExpiresAt);
                 ps.setInt(9, 1);
+                ps.setInt(10, commitAttempts);
                 ps.executeUpdate();
             }
         }
@@ -668,6 +680,101 @@ class OrderServiceTest {
 
         verify(downstreamServiceClient, atLeast(2)).commitInventory(anyString());
         verify(downstreamServiceClient, never()).refundPayment(anyString(), anyInt(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("M-03: exhausted inventory commits escalate to exactly one refund task and a REFUNDED order")
+    void testCommitExhaustionEscalatesToSingleRefund() throws Exception {
+        String orderId = "ord-m03-refund-" + UUID.randomUUID().toString().substring(0, 8);
+        String sagaId = "saga-m03-refund-" + UUID.randomUUID().toString().substring(0, 8);
+        insertSagaFixture(orderId, sagaId, "INVENTORY_COMMITTING", "dead-checkout", 0, 5);
+
+        when(downstreamServiceClient.commitInventory(eq(orderId)))
+                .thenThrow(new ResourceAccessException("inventory unavailable"));
+        when(downstreamServiceClient.getPaymentByOrderId(eq(orderId)))
+                .thenReturn(Optional.of(Map.of(
+                        "paymentId", "pay-m03-123",
+                        "amountCents", 3500,
+                        "status", "CAPTURED")));
+
+        recoverUntilState(sagaId, "COMPENSATING_PAYMENT");
+        outboxWorker.recoverStaleSagas();
+        outboxWorker.recoverStaleSagas();
+
+        assertEquals(1, countRefundTasks(sagaId), "Exactly one refund task must be enqueued");
+        assertEquals("REFUNDING", readOrderStatus(orderId));
+
+        awaitTaskState(sagaId, "REFUND_PAYMENT", "COMPLETED");
+
+        verify(downstreamServiceClient, times(1)).refundPayment(
+                eq("pay-m03-123"), eq(3500), anyString(), eq("outbox-ref-pay-m03-123"));
+        verify(downstreamServiceClient, atLeastOnce()).releaseInventory(eq(orderId), anyString());
+        assertEquals("REFUNDED", readOrderStatus(orderId));
+        assertEquals("REFUNDED", readSagaState(sagaId));
+        assertEquals(1, countRefundTasks(sagaId));
+    }
+
+    @Test
+    @DisplayName("M-03: a successful late inventory commit confirms the order and never refunds")
+    void testLateCommitConfirmsWithoutRefund() throws Exception {
+        String orderId = "ord-m03-late-" + UUID.randomUUID().toString().substring(0, 8);
+        String sagaId = "saga-m03-late-" + UUID.randomUUID().toString().substring(0, 8);
+        insertSagaFixture(orderId, sagaId, "INVENTORY_COMMITTING", "dead-checkout", 0, 5);
+
+        when(downstreamServiceClient.commitInventory(eq(orderId)))
+                .thenReturn(Map.of("status", "COMMITTED"));
+        when(downstreamServiceClient.getPaymentByOrderId(eq(orderId)))
+                .thenReturn(Optional.of(Map.of(
+                        "paymentId", "pay-m03-late",
+                        "amountCents", 3500,
+                        "status", "CAPTURED")));
+
+        recoverUntilState(sagaId, "COMPLETED");
+
+        assertEquals("CONFIRMED", readOrderStatus(orderId));
+        assertEquals(0, countRefundTasks(sagaId), "A successful commit must never enqueue a refund");
+        verify(downstreamServiceClient, never()).refundPayment(
+                anyString(), anyInt(), anyString(), anyString());
+    }
+
+    private void recoverUntilState(String sagaId, String expectedState) throws SQLException {
+        for (int i = 0; i < 20 && !expectedState.equals(readSagaState(sagaId)); i++) {
+            outboxWorker.recoverStaleSagas();
+        }
+        assertEquals(expectedState, readSagaState(sagaId));
+    }
+
+    private int countRefundTasks(String sagaId) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT COUNT(*) FROM outbox_tasks WHERE saga_id = ? AND task_type = 'REFUND_PAYMENT'")) {
+            ps.setString(1, sagaId);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next());
+                return rs.getInt(1);
+            }
+        }
+    }
+
+    private String readTaskState(String sagaId, String taskType) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT state FROM outbox_tasks WHERE saga_id = ? AND task_type = ? " +
+                             "ORDER BY created_at DESC LIMIT 1")) {
+            ps.setString(1, sagaId);
+            ps.setString(2, taskType);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString(1) : null;
+            }
+        }
+    }
+
+    private void awaitTaskState(String sagaId, String taskType, String expectedState) throws Exception {
+        for (int i = 0; i < 60 && !expectedState.equals(readTaskState(sagaId, taskType)); i++) {
+            outboxWorker.processOutboxTasks();
+            Thread.sleep(20);
+        }
+        assertEquals(expectedState, readTaskState(sagaId, taskType));
     }
 
     @Test
@@ -721,5 +828,96 @@ class OrderServiceTest {
                 assertEquals("COMPLETED", rs.getString("saga_state"));
             }
         }
+    }
+
+    @Test
+    @DisplayName("M-01: outbox retries honor 2/4/8/16/32s backoff with jitter and dead-letter after five attempts")
+    void testOutboxBackoffGatesRetriesAndDeadLetters() throws Exception {
+        String orderId = "ord-m01-" + UUID.randomUUID().toString().substring(0, 8);
+        String sagaId = "saga-m01-" + UUID.randomUUID().toString().substring(0, 8);
+        String taskId = "task-m01-" + UUID.randomUUID().toString().substring(0, 8);
+
+        // This test owns the outbox table: no other task may be selected by the
+        // immediate second tick used to prove the backoff gate is honoured.
+        try (Connection conn = dataSource.getConnection();
+             Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate("DELETE FROM outbox_tasks");
+        }
+        insertSagaFixture(orderId, sagaId, "PAYMENT_CONFIRMED", null, 0);
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO outbox_tasks (id, saga_id, task_type, payload, state, retries, " +
+                             "created_at, updated_at, next_attempt_at) " +
+                             "VALUES (?, ?, 'UNKNOWN_M01_TASK', '{}', 'PENDING', 0, 0, 0, 0)")) {
+            ps.setString(1, taskId);
+            ps.setString(2, sagaId);
+            ps.executeUpdate();
+        }
+
+        double retriedBefore = meterRegistry.get("causalotel.outbox.tasks.retried").counter().count();
+        double deadBefore = meterRegistry.get("causalotel.outbox.tasks.dead_lettered").counter().count();
+        long jitterMs = Math.floorMod(taskId.hashCode(), 1000);
+        long[] baseDelays = {2000L, 4000L, 8000L, 16000L, 32000L};
+
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            clearSagaLease(sagaId);
+            outboxWorker.processOutboxTasks();
+
+            TaskRow row = readTaskRow(taskId);
+            assertEquals(attempt, row.retries(), "retry count after attempt " + attempt);
+            assertEquals(baseDelays[attempt - 1] + jitterMs, row.nextAttemptAt() - row.updatedAt(),
+                    "attempt " + attempt + " must store the exponential delay plus per-task jitter");
+
+            if (attempt < 5) {
+                assertEquals("PENDING", row.state());
+                outboxWorker.processOutboxTasks();
+                assertEquals(attempt, readTaskRow(taskId).retries(),
+                        "a pending task must not be retried before its backoff elapses");
+                rewindTask(taskId);
+            } else {
+                assertEquals("FAILED", row.state(), "the fifth failure must dead-letter the task");
+            }
+        }
+
+        assertEquals(5.0,
+                meterRegistry.get("causalotel.outbox.tasks.retried").counter().count() - retriedBefore,
+                0.0001, "every failed attempt must increment the retried counter");
+        assertEquals(1.0,
+                meterRegistry.get("causalotel.outbox.tasks.dead_lettered").counter().count() - deadBefore,
+                0.0001, "dead-lettering must increment the dead-letter counter exactly once");
+    }
+
+    private void clearSagaLease(String sagaId) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "UPDATE saga_instances SET lease_expires_at = 0 WHERE id = ?")) {
+            ps.setString(1, sagaId);
+            ps.executeUpdate();
+        }
+    }
+
+    private void rewindTask(String taskId) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "UPDATE outbox_tasks SET next_attempt_at = 0 WHERE id = ?")) {
+            ps.setString(1, taskId);
+            ps.executeUpdate();
+        }
+    }
+
+    private TaskRow readTaskRow(String taskId) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT state, retries, next_attempt_at, updated_at FROM outbox_tasks WHERE id = ?")) {
+            ps.setString(1, taskId);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next(), "outbox task " + taskId + " must exist");
+                return new TaskRow(rs.getString("state"), rs.getInt("retries"),
+                        rs.getLong("next_attempt_at"), rs.getLong("updated_at"));
+            }
+        }
+    }
+
+    private record TaskRow(String state, int retries, long nextAttemptAt, long updatedAt) {
     }
 }

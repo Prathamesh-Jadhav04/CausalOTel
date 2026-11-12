@@ -2,8 +2,11 @@ package com.causalotel.order.service;
 
 import com.causalotel.order.client.DownstreamServiceClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -25,6 +28,8 @@ public class OutboxWorker {
     private static final long TASK_LEASE_MS = 30_000L;
     private static final long SAGA_LEASE_MS = 30_000L;
     private static final int MAX_RETRIES = 5;
+    /** M-03: after this many failed inventory commits a captured payment is refunded. */
+    private static final int MAX_COMMIT_ATTEMPTS = 5;
     private static final long MAX_BACKOFF_MS = 60_000L;
 
     private final DataSource dataSource;
@@ -32,15 +37,36 @@ public class OutboxWorker {
     private final SagaOrchestrator sagaOrchestrator;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final String workerId = "worker-" + UUID.randomUUID().toString().substring(0, 8);
+    private final Counter retriedTasks;
+    private final Counter deadLetteredTasks;
+
+    /**
+     * Tests disable the scheduled wrappers so retry timing can be asserted
+     * deterministically; the public tick methods remain callable directly.
+     */
+    @Value("${causalotel.outbox.scheduling.enabled:true}")
+    private boolean schedulingEnabled = true;
 
     public OutboxWorker(DataSource dataSource, DownstreamServiceClient downstreamClient,
-                        SagaOrchestrator sagaOrchestrator) {
+                        SagaOrchestrator sagaOrchestrator, MeterRegistry meterRegistry) {
         this.dataSource = dataSource;
         this.downstreamClient = downstreamClient;
         this.sagaOrchestrator = sagaOrchestrator;
+        this.retriedTasks = Counter.builder("causalotel.outbox.tasks.retried")
+                .description("Outbox tasks rescheduled after a failed attempt")
+                .register(meterRegistry);
+        this.deadLetteredTasks = Counter.builder("causalotel.outbox.tasks.dead_lettered")
+                .description("Outbox tasks that exhausted every retry and entered FAILED")
+                .register(meterRegistry);
     }
 
     @Scheduled(fixedDelay = 5000)
+    public void scheduledOutboxTick() {
+        if (schedulingEnabled) {
+            processOutboxTasks();
+        }
+    }
+
     public void processOutboxTasks() {
         long now = System.currentTimeMillis();
 
@@ -137,7 +163,11 @@ public class OutboxWorker {
             } else {
                 int nextRetries = retries + 1;
                 String nextState = nextRetries >= MAX_RETRIES ? "FAILED" : "PENDING";
-                long retryDelay = Math.min(MAX_BACKOFF_MS, (long) Math.pow(2, nextRetries) * 1000L);
+                long baseDelay = Math.min(MAX_BACKOFF_MS, (long) Math.pow(2, nextRetries) * 1000L);
+                // M-01: per-task jitter avoids synchronized retry storms while keeping
+                // the 2/4/8/16/32s schedule deterministic for a given task id.
+                long jitterMs = Math.floorMod(taskId.hashCode(), 1000);
+                long retryDelay = Math.min(MAX_BACKOFF_MS, baseDelay + jitterMs);
 
                 try (PreparedStatement ps = conn.prepareStatement(
                         "UPDATE outbox_tasks SET state = ?, retries = ?, lease_expires_at = 0, " +
@@ -150,7 +180,15 @@ public class OutboxWorker {
                     ps.setInt(6, newFencingToken);
                     ps.executeUpdate();
                 }
-                log.warn("Outbox task {} rescheduled (attempt {}/{})", taskId, nextRetries, MAX_RETRIES);
+                retriedTasks.increment();
+                if ("FAILED".equals(nextState)) {
+                    deadLetteredTasks.increment();
+                    log.error("Outbox task {} dead-lettered after {} attempts (type={}, saga={})",
+                            taskId, nextRetries, taskType, sagaId);
+                } else {
+                    log.warn("Outbox task {} rescheduled (attempt {}/{}) in {}ms",
+                            taskId, nextRetries, MAX_RETRIES, retryDelay);
+                }
             }
         } catch (Exception e) {
             log.error("Error in outbox processing cycle", e);
@@ -177,25 +215,15 @@ public class OutboxWorker {
         }
 
         if ("REFUND_PAYMENT".equals(taskType)) {
-            String paymentId = (String) payload.get("paymentId");
-            Number amount = (Number) payload.get("amountCents");
-            String idemKey = "outbox-ref-" + paymentId;
-            downstreamClient.refundPayment(paymentId, amount == null ? 0 : amount.intValue(),
-                    "Outbox recovery refund", idemKey);
             String orderId = (String) payload.get("orderId");
-            if (orderId != null) {
-                sagaOrchestrator.markOrderCancelled(orderId, sagaId, sagaOwner,
-                        "Payment refunded during compensation", 422);
-            }
-            return true;
+            String reason = (String) payload.getOrDefault("reason", "Outbox recovery refund");
+            return executeRefundPayment(orderId, sagaId, sagaOwner, reason);
         }
 
         if ("COMMIT_INVENTORY".equals(taskType)) {
             String orderId = (String) payload.get("orderId");
-            sagaOrchestrator.renewSagaLease(sagaId, sagaOwner, SAGA_LEASE_MS);
-            downstreamClient.commitInventory(orderId);
-            sagaOrchestrator.markOrderConfirmed(orderId, sagaId, sagaOwner, null);
-            return true;
+            return commitInventoryOrEscalate(orderId, sagaId, sagaOwner, null,
+                    "Inventory commit failed after outbox retries");
         }
 
         if ("RECONCILE_PAYMENT".equals(taskType)) {
@@ -207,11 +235,10 @@ public class OutboxWorker {
                 Map<String, Object> payRecord = payOpt.get();
                 String payStatus = String.valueOf(payRecord.get("status"));
                 if ("CAPTURED".equalsIgnoreCase(payStatus)) {
-                    sagaOrchestrator.renewSagaLease(sagaId, sagaOwner, SAGA_LEASE_MS);
-                    downstreamClient.commitInventory(orderId);
-                    sagaOrchestrator.markOrderConfirmed(orderId, sagaId, sagaOwner,
-                            (String) payRecord.get("paymentId"));
-                    return true;
+                    sagaOrchestrator.updateSagaState(sagaId, sagaOwner, "INVENTORY_COMMITTING", null);
+                    return commitInventoryOrEscalate(orderId, sagaId, sagaOwner,
+                            (String) payRecord.get("paymentId"),
+                            "Inventory commit failed after payment reconciliation");
                 }
                 if ("DECLINED".equalsIgnoreCase(payStatus) || "FAILED".equalsIgnoreCase(payStatus)) {
                     downstreamClient.releaseInventory(orderId,
@@ -236,10 +263,10 @@ public class OutboxWorker {
                 Map<String, Object> payResp = downstreamClient.chargePayment(
                         orderId, total.intValue(), "USD", "pay-" + orderId);
                 if ("CAPTURED".equalsIgnoreCase((String) payResp.get("status"))) {
-                    downstreamClient.commitInventory(orderId);
-                    sagaOrchestrator.markOrderConfirmed(orderId, sagaId, sagaOwner,
-                            (String) payResp.get("paymentId"));
-                    return true;
+                    sagaOrchestrator.updateSagaState(sagaId, sagaOwner, "INVENTORY_COMMITTING", null);
+                    return commitInventoryOrEscalate(orderId, sagaId, sagaOwner,
+                            (String) payResp.get("paymentId"),
+                            "Inventory commit failed after reconciliation charge");
                 }
                 return false;
             } catch (Exception ex) {
@@ -259,11 +286,107 @@ public class OutboxWorker {
     }
 
     /**
+     * M-03: commit inventory or, once attempts are exhausted, make a terminal
+     * compensation decision. A final idempotent commit is attempted before the
+     * refund decision: if inventory was actually committed and only the
+     * response was lost, the order is confirmed instead of refunded.
+     */
+    private boolean commitInventoryOrEscalate(String orderId, String sagaId, String sagaOwner,
+                                              String paymentId, String reason) {
+        sagaOrchestrator.renewSagaLease(sagaId, sagaOwner, SAGA_LEASE_MS);
+        try {
+            downstreamClient.commitInventory(orderId);
+        } catch (Exception commitEx) {
+            int attempts = sagaOrchestrator.incrementCommitAttempts(sagaId, sagaOwner);
+            log.warn("Inventory commit failed for order {} (attempt {}/{}): {}",
+                    orderId, attempts, MAX_COMMIT_ATTEMPTS, commitEx.getMessage());
+            if (attempts >= MAX_COMMIT_ATTEMPTS) {
+                boolean resolved = compensateAfterCommitExhaustion(orderId, sagaId, sagaOwner,
+                        reason + ": " + commitEx.getMessage());
+                if (resolved) {
+                    log.warn("Saga {} reached a terminal decision after {} commit failures",
+                            sagaId, attempts);
+                    return true;
+                }
+            }
+            return false;
+        }
+        sagaOrchestrator.markOrderConfirmed(orderId, sagaId, sagaOwner, paymentId);
+        return true;
+    }
+
+    private boolean compensateAfterCommitExhaustion(String orderId, String sagaId,
+                                                    String sagaOwner, String reason) {
+        sagaOrchestrator.renewSagaLease(sagaId, sagaOwner, SAGA_LEASE_MS);
+        try {
+            downstreamClient.commitInventory(orderId);
+        } catch (Exception commitEx) {
+            log.warn("Final inventory commit before refund failed for order {}: {}",
+                    orderId, commitEx.getMessage());
+            return sagaOrchestrator.escalateToRefund(sagaId, sagaOwner, orderId, reason);
+        }
+        sagaOrchestrator.markOrderConfirmed(orderId, sagaId, sagaOwner, null);
+        log.info("Late inventory commit succeeded for order {}; refund not required", orderId);
+        return true;
+    }
+
+    /**
+     * M-03: refund a captured payment exactly once and release the abandoned
+     * reservation. The payment-service idempotency key makes retries safe.
+     */
+    private boolean executeRefundPayment(String orderId, String sagaId, String sagaOwner,
+                                         String reason) throws Exception {
+        Optional<Map<String, Object>> payOpt;
+        try {
+            payOpt = downstreamClient.getPaymentByOrderId(orderId);
+        } catch (Exception lookupEx) {
+            log.warn("Could not read payment record for order {} during compensation: {}",
+                    orderId, lookupEx.getMessage());
+            return false;
+        }
+
+        if (payOpt.isEmpty()) {
+            log.warn("No payment record for order {}; compensation will retry", orderId);
+            return false;
+        }
+
+        Map<String, Object> payRecord = payOpt.get();
+        String paymentId = (String) payRecord.get("paymentId");
+        Number amount = (Number) payRecord.get("amountCents");
+        if (paymentId == null || amount == null) {
+            log.warn("Payment record for order {} lacks paymentId/amountCents; compensation will retry",
+                    orderId);
+            return false;
+        }
+
+        sagaOrchestrator.renewSagaLease(sagaId, sagaOwner, SAGA_LEASE_MS);
+        downstreamClient.refundPayment(paymentId, amount.intValue(), reason,
+                "outbox-ref-" + paymentId);
+        sagaOrchestrator.markOrderRefunded(orderId, sagaId, sagaOwner, reason);
+
+        try {
+            downstreamClient.releaseInventory(orderId, reason);
+        } catch (Exception releaseEx) {
+            log.warn("Inventory release after refund failed for order {}; reservation will expire: {}",
+                    orderId, releaseEx.getMessage());
+        }
+        log.info("Refunded payment {} for order {} after inventory commit exhaustion",
+                paymentId, orderId);
+        return true;
+    }
+
+    /**
      * H-07: recover only sagas whose lease has expired, and claim each one
      * atomically before touching downstream state. An active checkout renews
      * its lease at every step, so it can never be "recovered" concurrently.
      */
     @Scheduled(fixedDelay = 5000)
+    public void scheduledRecoveryTick() {
+        if (schedulingEnabled) {
+            recoverStaleSagas();
+        }
+    }
+
     public void recoverStaleSagas() {
         long now = System.currentTimeMillis();
         try (Connection conn = dataSource.getConnection();
@@ -300,10 +423,9 @@ public class OutboxWorker {
                             } catch (Exception ignored) {
                                 // The commit is still safe; paymentId is informational.
                             }
-                            sagaOrchestrator.renewSagaLease(sagaId, owner, SAGA_LEASE_MS);
-                            downstreamClient.commitInventory(orderId);
-                            sagaOrchestrator.markOrderConfirmed(orderId, sagaId, owner, paymentId);
-                            log.info("Stale saga {} recovered to COMPLETED", sagaId);
+                            commitInventoryOrEscalate(orderId, sagaId, owner, paymentId,
+                                    "Inventory commit failed during stale-saga recovery");
+                            log.info("Stale saga {} recovered or escalated", sagaId);
                         } else if ("RECONCILIATION_REQUIRED".equals(state)) {
                             Optional<Map<String, Object>> payOpt =
                                     downstreamClient.getPaymentByOrderId(orderId);
@@ -311,10 +433,11 @@ public class OutboxWorker {
                                 Map<String, Object> payRecord = payOpt.get();
                                 String payStatus = String.valueOf(payRecord.get("status"));
                                 if ("CAPTURED".equalsIgnoreCase(payStatus)) {
-                                    sagaOrchestrator.renewSagaLease(sagaId, owner, SAGA_LEASE_MS);
-                                    downstreamClient.commitInventory(orderId);
-                                    sagaOrchestrator.markOrderConfirmed(orderId, sagaId, owner,
-                                            (String) payRecord.get("paymentId"));
+                                    sagaOrchestrator.updateSagaState(sagaId, owner,
+                                            "INVENTORY_COMMITTING", null);
+                                    commitInventoryOrEscalate(orderId, sagaId, owner,
+                                            (String) payRecord.get("paymentId"),
+                                            "Inventory commit failed during stale reconciliation");
                                 } else if ("DECLINED".equalsIgnoreCase(payStatus)
                                         || "FAILED".equalsIgnoreCase(payStatus)) {
                                     downstreamClient.releaseInventory(orderId,
@@ -332,19 +455,13 @@ public class OutboxWorker {
                             sagaOrchestrator.markOrderCancelled(orderId, sagaId, owner,
                                     "Compensation completed", 422);
                         } else if ("COMPENSATING_PAYMENT".equals(state)) {
-                            Optional<Map<String, Object>> payOpt =
-                                    downstreamClient.getPaymentByOrderId(orderId);
-                            if (payOpt.isPresent()) {
-                                String paymentId = (String) payOpt.get().get("paymentId");
-                                Number amount = (Number) payOpt.get().get("amountCents");
-                                downstreamClient.refundPayment(paymentId,
-                                        amount == null ? 0 : amount.intValue(),
-                                        "Stale saga compensation refund",
-                                        "outbox-ref-" + paymentId);
+                            if (sagaOrchestrator.hasLiveRefundTask(sagaId)) {
+                                // The outbox owns the compensation; do not race it.
+                                sagaOrchestrator.releaseSagaLease(sagaId, owner);
+                            } else {
+                                executeRefundPayment(orderId, sagaId, owner,
+                                        "Stale saga payment compensation");
                             }
-                            downstreamClient.releaseInventory(orderId, "Stale saga payment compensation");
-                            sagaOrchestrator.markOrderCancelled(orderId, sagaId, owner,
-                                    "Payment compensation completed", 422);
                         } else {
                             sagaOrchestrator.releaseSagaLease(sagaId, owner);
                         }

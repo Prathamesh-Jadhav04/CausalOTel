@@ -247,6 +247,49 @@ class PaymentServiceTest {
     }
 
     @Test
+    @DisplayName("M-02: 100 concurrent charges for one order create exactly one payment row")
+    void testConcurrentChargesCreateSinglePayment() throws Exception {
+        String orderId = "ORD-STRIPE-" + UUID.randomUUID();
+        int chargeCount = 100;
+        ExecutorService executor = Executors.newFixedThreadPool(16);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        List<Future<Integer>> futures = new ArrayList<>();
+
+        for (int i = 0; i < chargeCount; i++) {
+            final int index = i;
+            futures.add(executor.submit(() -> {
+                startLatch.await();
+                try {
+                    PaymentController.ChargeRequest request = new PaymentController.ChargeRequest(
+                            orderId, 2500, "USD",
+                            "IDEM-STRIPE-" + index + "-" + UUID.randomUUID());
+                    return paymentController.charge(request).getStatusCode().value();
+                } catch (ResponseStatusException e) {
+                    return e.getStatusCode().value();
+                } catch (Exception e) {
+                    return 500;
+                }
+            }));
+        }
+
+        startLatch.countDown();
+        for (Future<Integer> future : futures) {
+            assertEquals(200, future.get(30, TimeUnit.SECONDS),
+                    "Every concurrent charge must resolve to the single captured payment");
+        }
+        executor.shutdown();
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM payments WHERE order_id = ?")) {
+            ps.setString(1, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next());
+                assertEquals(1, rs.getInt(1), "Exactly one payment row may exist per order");
+            }
+        }
+    }
+
+    @Test
     @DisplayName("Scenario 10: Two refund requests arrive simultaneously -> Total refunded never exceeds captured amount")
     void testScenario10_TwoRefundRequestsArriveSimultaneously() throws Exception {
         String orderId = "ORD-CONC-REF-" + UUID.randomUUID();

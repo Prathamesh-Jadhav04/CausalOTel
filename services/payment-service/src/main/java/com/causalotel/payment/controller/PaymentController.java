@@ -28,11 +28,18 @@ public class PaymentController {
     private static final Logger log = LoggerFactory.getLogger(PaymentController.class);
     private static final int MAX_FAULT_LATENCY_MS = 10_000;
     private static final int MAX_ERROR_MESSAGE_LENGTH = 500;
+    /**
+     * M-02: fixed striped locks instead of an unbounded, removable map. A map entry
+     * removed in a finally block can hand two callers different lock instances for
+     * the same payment, defeating in-process serialization. Stripes are allocated
+     * once, never removed, and bound memory to a constant.
+     */
+    private static final int PAYMENT_LOCK_STRIPES = 256;
 
     private final DataSource dataSource;
     private final PaymentGatewaySimulator gatewaySimulator;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final java.util.concurrent.ConcurrentHashMap<String, Object> paymentLocks = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Object[] paymentLocks = new Object[PAYMENT_LOCK_STRIPES];
 
     @Value("${causalotel.fault-injection.enabled:true}")
     private boolean faultInjectionEnabled;
@@ -40,6 +47,13 @@ public class PaymentController {
     public PaymentController(DataSource dataSource, PaymentGatewaySimulator gatewaySimulator) {
         this.dataSource = dataSource;
         this.gatewaySimulator = gatewaySimulator;
+        for (int i = 0; i < paymentLocks.length; i++) {
+            paymentLocks[i] = new Object();
+        }
+    }
+
+    private Object lockFor(String key) {
+        return paymentLocks[(key.hashCode() & 0x7fffffff) % paymentLocks.length];
     }
 
     public record ChargeRequest(String orderId, int amountCents, String currency, String idempotencyKey) {}
@@ -159,11 +173,10 @@ public class PaymentController {
         String paymentId = "pay-" + sha256(request.orderId()).substring(0, 16);
         String gatewayRef = "gw-" + sha256(request.orderId() + ":" + idempotencyKey).substring(0, 16);
 
-        Object lock = paymentLocks.computeIfAbsent(paymentId, k -> new Object());
+        Object lock = lockFor(paymentId);
         synchronized (lock) {
-            try {
-                try (Connection conn = dataSource.getConnection()) {
-                    conn.setAutoCommit(false);
+            try (Connection conn = dataSource.getConnection()) {
+                conn.setAutoCommit(false);
                     try {
                         // 1. Idempotency Check
                 try (PreparedStatement ps = conn.prepareStatement("SELECT request_hash, response_body FROM payment_idempotency WHERE idempotency_key = ?")) {
@@ -263,9 +276,6 @@ public class PaymentController {
                 throw e;
             }
         }
-            } finally {
-                paymentLocks.remove(paymentId);
-            }
         }
     }
 
@@ -284,11 +294,10 @@ public class PaymentController {
         String requestHash = sha256(request.paymentId() + ":" + request.amountCents());
         long now = System.currentTimeMillis();
 
-        Object lock = paymentLocks.computeIfAbsent(request.paymentId(), k -> new Object());
+        Object lock = lockFor(request.paymentId());
         synchronized (lock) {
-            try {
-                try (Connection conn = dataSource.getConnection()) {
-                    conn.setAutoCommit(false);
+            try (Connection conn = dataSource.getConnection()) {
+                conn.setAutoCommit(false);
                     try {
                         // 1. Idempotency Check
                 try (PreparedStatement ps = conn.prepareStatement("SELECT request_hash, response_body FROM payment_idempotency WHERE idempotency_key = ?")) {
@@ -401,9 +410,6 @@ public class PaymentController {
                 throw e;
             }
         }
-            } finally {
-                paymentLocks.remove(request.paymentId());
-            }
         }
     }
 

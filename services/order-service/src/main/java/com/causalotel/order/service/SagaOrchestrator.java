@@ -617,6 +617,39 @@ public class SagaOrchestrator {
         }
     }
 
+    /**
+     * M-03: terminal state for a captured payment that was compensated because
+     * inventory could never be committed. The order is REFUNDED, not CANCELLED,
+     * so operators can distinguish "nothing was charged" from "money returned".
+     */
+    public void markOrderRefunded(String orderId, String sagaId, String owner, String reason) {
+        long now = System.currentTimeMillis();
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                updateOrderStatus(conn, orderId, "REFUNDED", now);
+                if (sagaId != null) {
+                    updateSagaState(conn, sagaId, owner, "REFUNDED", reason, now);
+                }
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("orderId", orderId);
+                response.put("status", "REFUNDED");
+                response.put("message", reason);
+                completeIdempotencyForOrder(conn, orderId, 200,
+                        objectMapper.writeValueAsString(response), now);
+                conn.commit();
+            } catch (Exception e) {
+                conn.rollback();
+                if (e instanceof SagaLeaseLostException leaseLost) {
+                    throw leaseLost;
+                }
+                throw new SagaPersistenceException("Failed to mark order refunded " + orderId, e);
+            }
+        } catch (SQLException e) {
+            throw new SagaPersistenceException("Failed to mark order refunded " + orderId, e);
+        }
+    }
+
     private void completeIdempotencyForOrder(Connection conn, String orderId, int responseStatus,
                                              String responseBody, long now) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
@@ -672,6 +705,149 @@ public class SagaOrchestrator {
             }
         } catch (SQLException e) {
             throw new SagaPersistenceException("Failed to read saga state " + sagaId, e);
+        }
+    }
+
+    public int getCommitAttempts(String sagaId) {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT commit_attempts FROM saga_instances WHERE id = ?")) {
+            ps.setString(1, sagaId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getInt(1) : 0;
+            }
+        } catch (SQLException e) {
+            throw new SagaPersistenceException("Failed to read commit attempts " + sagaId, e);
+        }
+    }
+
+    public int incrementCommitAttempts(String sagaId, String owner) {
+        long now = System.currentTimeMillis();
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "UPDATE saga_instances SET commit_attempts = commit_attempts + 1, updated_at = ? " +
+                                "WHERE id = ? AND lease_owner = ?")) {
+                    ps.setLong(1, now);
+                    ps.setString(2, sagaId);
+                    ps.setString(3, owner);
+                    if (ps.executeUpdate() != 1) {
+                        conn.rollback();
+                        throw new SagaLeaseLostException(sagaId);
+                    }
+                }
+                int attempts;
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "SELECT commit_attempts FROM saga_instances WHERE id = ?")) {
+                    ps.setString(1, sagaId);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        attempts = rs.next() ? rs.getInt(1) : 0;
+                    }
+                }
+                conn.commit();
+                return attempts;
+            } catch (Exception e) {
+                conn.rollback();
+                if (e instanceof SagaLeaseLostException leaseLost) {
+                    throw leaseLost;
+                }
+                throw new SagaPersistenceException("Failed to increment commit attempts " + sagaId, e);
+            }
+        } catch (SQLException e) {
+            throw new SagaPersistenceException("Failed to increment commit attempts " + sagaId, e);
+        }
+    }
+
+    /**
+     * M-03: terminal compensation decision for a captured payment whose
+     * inventory can never be committed. The state guard makes the transition
+     * and the single REFUND_PAYMENT outbox task exactly-once even when several
+     * workers race. Returns true when the saga is already compensating or
+     * refunded, so callers can treat the decision as idempotent.
+     */
+    public boolean escalateToRefund(String sagaId, String owner, String orderId, String reason) {
+        long now = System.currentTimeMillis();
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                int updated;
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "UPDATE saga_instances SET current_state = 'COMPENSATING_PAYMENT', error_reason = ?, " +
+                                "updated_at = ?, lease_expires_at = 0, version = version + 1 " +
+                                "WHERE id = ? AND lease_owner = ? " +
+                                "AND current_state IN ('PAYMENT_CONFIRMED', 'INVENTORY_COMMITTING')")) {
+                    ps.setString(1, reason);
+                    ps.setLong(2, now);
+                    ps.setString(3, sagaId);
+                    ps.setString(4, owner);
+                    updated = ps.executeUpdate();
+                }
+
+                if (updated != 1) {
+                    String state = null;
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "SELECT current_state FROM saga_instances WHERE id = ?")) {
+                        ps.setString(1, sagaId);
+                        try (ResultSet rs = ps.executeQuery()) {
+                            if (rs.next()) {
+                                state = rs.getString(1);
+                            }
+                        }
+                    }
+                    conn.rollback();
+                    return "COMPENSATING_PAYMENT".equals(state) || "REFUNDED".equals(state);
+                }
+
+                updateOrderStatus(conn, orderId, "REFUNDING", now);
+                if (!hasOutboxTask(conn, sagaId, "REFUND_PAYMENT")) {
+                    Map<String, Object> payload = new LinkedHashMap<>();
+                    payload.put("orderId", orderId);
+                    payload.put("sagaId", sagaId);
+                    payload.put("reason", reason);
+                    enqueueOutboxTask(conn, sagaId, "REFUND_PAYMENT", payload, now);
+                }
+                conn.commit();
+                log.warn("Escalated saga {} for order {} to COMPENSATING_PAYMENT: {}", sagaId, orderId, reason);
+                return true;
+            } catch (Exception e) {
+                conn.rollback();
+                if (e instanceof SagaLeaseLostException leaseLost) {
+                    throw leaseLost;
+                }
+                throw new SagaPersistenceException("Failed to escalate saga " + sagaId + " to refund", e);
+            }
+        } catch (SQLException e) {
+            throw new SagaPersistenceException("Failed to escalate saga " + sagaId + " to refund", e);
+        }
+    }
+
+    private boolean hasOutboxTask(Connection conn, String sagaId, String taskType) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT 1 FROM outbox_tasks WHERE saga_id = ? AND task_type = ? LIMIT 1")) {
+            ps.setString(1, sagaId);
+            ps.setString(2, taskType);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    /**
+     * True while the outbox still owns a refund attempt. Recovery must not run
+     * a second refund in parallel with a live REFUND_PAYMENT task.
+     */
+    public boolean hasLiveRefundTask(String sagaId) {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT 1 FROM outbox_tasks WHERE saga_id = ? AND task_type = 'REFUND_PAYMENT' " +
+                             "AND state IN ('PENDING', 'IN_PROGRESS') LIMIT 1")) {
+            ps.setString(1, sagaId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new SagaPersistenceException("Failed to read refund task state for saga " + sagaId, e);
         }
     }
 
