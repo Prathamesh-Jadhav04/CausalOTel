@@ -98,9 +98,18 @@ export class TempoClient {
    * Search recent traces. Tempo's search API is the only trace-list source;
    * when Tempo is down this throws rather than returning fabricated rows.
    */
-  async listTraces(limit = 20) {
+  async listTraces(limit = 20, options = {}) {
     const boundedLimit = Math.max(1, Math.min(100, Number.parseInt(limit, 10) || 20));
-    const data = await this._request(`/api/search?limit=${boundedLimit}`);
+    let pathname = `/api/search?limit=${boundedLimit}`;
+    // Tempo's search API accepts unix-second bounds. Passing them keeps the
+    // M-05 topology graph scoped to the caller's requested window.
+    if (Number.isFinite(options.startMs)) {
+      pathname += `&start=${Math.floor(options.startMs / 1000)}`;
+    }
+    if (Number.isFinite(options.endMs)) {
+      pathname += `&end=${Math.floor(options.endMs / 1000)}`;
+    }
+    const data = await this._request(pathname);
     const traces = Array.isArray(data?.traces) ? data.traces : [];
 
     return traces.map(t => ({

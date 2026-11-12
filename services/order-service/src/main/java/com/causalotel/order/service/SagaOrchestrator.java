@@ -990,12 +990,24 @@ public class SagaOrchestrator {
                                 + item.expectedPriceCents() + " but catalog is " + catalogPrice);
             }
 
-            String productId = item.productId() != null
-                    ? item.productId()
-                    : String.valueOf(product.getOrDefault("id", ""));
+            // M-06: the catalog record is authoritative for the product id as
+            // well as the price. A client-supplied id may only confirm it.
+            Object catalogIdValue = product.get("id");
+            String catalogProductId = catalogIdValue == null ? null : String.valueOf(catalogIdValue).trim();
+            if (catalogProductId == null || catalogProductId.isEmpty()) {
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                        "Product catalog record lacks an id for SKU: " + sku);
+            }
+            String requestedProductId = item.productId();
+            if (requestedProductId != null && !requestedProductId.isBlank()
+                    && !requestedProductId.equals(catalogProductId)) {
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "productId does not match the catalog record for SKU: " + sku);
+            }
+
             ResolvedItem existing = merged.get(sku);
             if (existing == null) {
-                merged.put(sku, new ResolvedItem(productId, sku, item.quantity(), catalogPrice));
+                merged.put(sku, new ResolvedItem(catalogProductId, sku, item.quantity(), catalogPrice));
             } else {
                 if (existing.unitPriceCents() != catalogPrice) {
                     throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -1006,7 +1018,7 @@ public class SagaOrchestrator {
                     throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                             "Combined quantity exceeds the limit for SKU: " + sku);
                 }
-                merged.put(sku, new ResolvedItem(existing.productId(), sku, combinedQuantity, catalogPrice));
+                merged.put(sku, new ResolvedItem(catalogProductId, sku, combinedQuantity, catalogPrice));
             }
         }
         return new ArrayList<>(merged.values());

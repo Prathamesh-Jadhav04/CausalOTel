@@ -10,6 +10,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -109,7 +110,7 @@ class OrderServiceTest {
             }
             int stock = "SKU-OUT-OF-STOCK".equals(sku) ? 0 : 100;
             return Optional.of(Map.of(
-                    "id", 1,
+                    "id", "PROD-" + sku.substring(4),
                     "sku", sku,
                     "price_cents", price,
                     "stock_quantity", stock
@@ -222,7 +223,7 @@ class OrderServiceTest {
     @DisplayName("POST /api/orders/checkout executes complete Saga and confirms Order")
     void testCheckoutSuccess() throws Exception {
         String idemKey = "IDEM-SAGA-" + UUID.randomUUID();
-        SagaOrchestrator.OrderItemDto item = new SagaOrchestrator.OrderItemDto("PROD-001", "SKU-LAPTOP-001", 1, 129999);
+        SagaOrchestrator.OrderItemDto item = new SagaOrchestrator.OrderItemDto("PROD-LAPTOP-001", "SKU-LAPTOP-001", 1, 129999);
         SagaOrchestrator.CheckoutRequest req = new SagaOrchestrator.CheckoutRequest("user-1", List.of(item), idemKey);
 
         ResponseEntity<Map<String, Object>> resp = orderController.checkout(req, authFor(req.userId()));
@@ -251,7 +252,7 @@ class OrderServiceTest {
                 .thenThrow(new RuntimeException("Simulated Card Declined"));
 
         String idemKey = "IDEM-FAIL-" + UUID.randomUUID();
-        SagaOrchestrator.OrderItemDto item = new SagaOrchestrator.OrderItemDto("PROD-002", "SKU-PHONE-002", 1, 79999);
+        SagaOrchestrator.OrderItemDto item = new SagaOrchestrator.OrderItemDto("PROD-PHONE-002", "SKU-PHONE-002", 1, 79999);
         SagaOrchestrator.CheckoutRequest req = new SagaOrchestrator.CheckoutRequest("user-2", List.of(item), idemKey);
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
@@ -410,7 +411,7 @@ class OrderServiceTest {
     void testTamperedPriceRejected() throws SQLException {
         String idemKey = "IDEM-PRICE-TAMPER-" + UUID.randomUUID();
         SagaOrchestrator.OrderItemDto item =
-                new SagaOrchestrator.OrderItemDto("PROD-001", "SKU-LAPTOP-001", 1, 1);
+                new SagaOrchestrator.OrderItemDto("PROD-LAPTOP-001", "SKU-LAPTOP-001", 1, 1);
         SagaOrchestrator.CheckoutRequest req =
                 new SagaOrchestrator.CheckoutRequest("user-201", List.of(item), idemKey);
 
@@ -428,7 +429,7 @@ class OrderServiceTest {
     void testCatalogPriceUsedWhenClientOmitsPrice() throws Exception {
         String idemKey = "IDEM-PRICE-CATALOG-" + UUID.randomUUID();
         SagaOrchestrator.OrderItemDto item =
-                new SagaOrchestrator.OrderItemDto("PROD-001", "SKU-LAPTOP-001", 2);
+                new SagaOrchestrator.OrderItemDto("PROD-LAPTOP-001", "SKU-LAPTOP-001", 2);
         SagaOrchestrator.CheckoutRequest req =
                 new SagaOrchestrator.CheckoutRequest("user-202", List.of(item), idemKey);
 
@@ -454,7 +455,7 @@ class OrderServiceTest {
     @DisplayName("C-02: out-of-stock catalog record is rejected before writes")
     void testOutOfStockCatalogRecordRejected() {
         SagaOrchestrator.OrderItemDto item =
-                new SagaOrchestrator.OrderItemDto("PROD-X", "SKU-OUT-OF-STOCK", 1);
+                new SagaOrchestrator.OrderItemDto("PROD-OUT-OF-STOCK", "SKU-OUT-OF-STOCK", 1);
         SagaOrchestrator.CheckoutRequest req = new SagaOrchestrator.CheckoutRequest(
                 "user-203", List.of(item), "IDEM-OOS-" + UUID.randomUUID());
 
@@ -462,6 +463,139 @@ class OrderServiceTest {
                 () -> orderController.checkout(req, authFor(req.userId())));
         assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
         assertTrue(String.valueOf(ex.getReason()).contains("out of stock"));
+    }
+
+    @Test
+    @DisplayName("M-06: more than 50 checkout items is rejected before any catalog call")
+    void testCheckoutRejectsMoreThanMaxItems() {
+        List<SagaOrchestrator.OrderItemDto> items = new ArrayList<>();
+        for (int i = 0; i < 51; i++) {
+            items.add(new SagaOrchestrator.OrderItemDto(null, "SKU-001", 1));
+        }
+        SagaOrchestrator.CheckoutRequest req = new SagaOrchestrator.CheckoutRequest(
+                "user-204", items, "IDEM-M06-ITEMS-" + UUID.randomUUID());
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> orderController.checkout(req, authFor(req.userId())));
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
+        verify(downstreamServiceClient, never()).getProductBySku(anyString());
+    }
+
+    @Test
+    @DisplayName("M-06: exactly 50 duplicate items coalesce into one reservation")
+    @SuppressWarnings("unchecked")
+    void testFiftyDuplicateItemsCoalesceIntoOneReservation() throws Exception {
+        List<SagaOrchestrator.OrderItemDto> items = new ArrayList<>();
+        for (int i = 0; i < 50; i++) {
+            items.add(new SagaOrchestrator.OrderItemDto(null, "SKU-001", 1));
+        }
+        SagaOrchestrator.CheckoutRequest req = new SagaOrchestrator.CheckoutRequest(
+                "user-205", items, "IDEM-M06-COALESCE-" + UUID.randomUUID());
+
+        ResponseEntity<Map<String, Object>> resp = orderController.checkout(req, authFor(req.userId()));
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        assertEquals(250000, resp.getBody().get("totalCents"));
+
+        ArgumentCaptor<List<Map<String, Object>>> captor = ArgumentCaptor.forClass(List.class);
+        verify(downstreamServiceClient).reserveInventory(anyString(), captor.capture());
+        assertEquals(1, captor.getValue().size());
+        assertEquals(50, ((Number) captor.getValue().get(0).get("quantity")).intValue());
+    }
+
+    @Test
+    @DisplayName("M-06: quantity at the per-item limit is accepted")
+    void testQuantityAtLimitAccepted() throws Exception {
+        SagaOrchestrator.OrderItemDto item = new SagaOrchestrator.OrderItemDto(null, "SKU-001", 1000);
+        SagaOrchestrator.CheckoutRequest req = new SagaOrchestrator.CheckoutRequest(
+                "user-206", List.of(item), "IDEM-M06-QTY-MAX-" + UUID.randomUUID());
+
+        ResponseEntity<Map<String, Object>> resp = orderController.checkout(req, authFor(req.userId()));
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        assertEquals(5_000_000, resp.getBody().get("totalCents"));
+    }
+
+    @Test
+    @DisplayName("M-06: quantity above the per-item limit is rejected")
+    void testQuantityAboveLimitRejected() {
+        SagaOrchestrator.OrderItemDto item = new SagaOrchestrator.OrderItemDto(null, "SKU-001", 1001);
+        SagaOrchestrator.CheckoutRequest req = new SagaOrchestrator.CheckoutRequest(
+                "user-207", List.of(item), "IDEM-M06-QTY-OVER-" + UUID.randomUUID());
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> orderController.checkout(req, authFor(req.userId())));
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
+        verify(downstreamServiceClient, never()).chargePayment(
+                anyString(), anyInt(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("M-06: duplicate SKUs whose combined quantity exceeds the limit are rejected")
+    void testDuplicateSkuCombinedQuantityAboveLimitRejected() {
+        List<SagaOrchestrator.OrderItemDto> items = List.of(
+                new SagaOrchestrator.OrderItemDto(null, "SKU-001", 600),
+                new SagaOrchestrator.OrderItemDto(null, "SKU-001", 500));
+        SagaOrchestrator.CheckoutRequest req = new SagaOrchestrator.CheckoutRequest(
+                "user-208", items, "IDEM-M06-COMBINED-" + UUID.randomUUID());
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> orderController.checkout(req, authFor(req.userId())));
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
+    }
+
+    @Test
+    @DisplayName("M-06: an order total above the configured maximum is rejected")
+    void testTotalAboveMaximumRejected() {
+        SagaOrchestrator.OrderItemDto item =
+                new SagaOrchestrator.OrderItemDto("PROD-LAPTOP-001", "SKU-LAPTOP-001", 1000);
+        SagaOrchestrator.CheckoutRequest req = new SagaOrchestrator.CheckoutRequest(
+                "user-209", List.of(item), "IDEM-M06-TOTAL-" + UUID.randomUUID());
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> orderController.checkout(req, authFor(req.userId())));
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
+        verify(downstreamServiceClient, never()).reserveInventory(anyString(), any());
+    }
+
+    @Test
+    @DisplayName("M-06: an unknown SKU is rejected before any order write")
+    void testUnknownSkuRejected() throws SQLException {
+        SagaOrchestrator.OrderItemDto item =
+                new SagaOrchestrator.OrderItemDto(null, "SKU-NOT-IN-CATALOG", 1);
+        SagaOrchestrator.CheckoutRequest req = new SagaOrchestrator.CheckoutRequest(
+                "user-210", List.of(item), "IDEM-M06-UNKNOWN-" + UUID.randomUUID());
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> orderController.checkout(req, authFor(req.userId())));
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, ex.getStatusCode());
+        assertTrue(String.valueOf(ex.getReason()).contains("Unknown"));
+        assertEquals(0, countOrdersForUser("user-210"));
+    }
+
+    @Test
+    @DisplayName("M-06: a client productId that contradicts the catalog record is rejected")
+    void testProductIdMismatchRejected() throws SQLException {
+        SagaOrchestrator.OrderItemDto item =
+                new SagaOrchestrator.OrderItemDto("PROD-WRONG", "SKU-001", 1);
+        SagaOrchestrator.CheckoutRequest req = new SagaOrchestrator.CheckoutRequest(
+                "user-211", List.of(item), "IDEM-M06-PRODUCT-" + UUID.randomUUID());
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> orderController.checkout(req, authFor(req.userId())));
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, ex.getStatusCode());
+        assertTrue(String.valueOf(ex.getReason()).contains("productId"));
+        assertEquals(0, countOrdersForUser("user-211"));
+    }
+
+    @Test
+    @DisplayName("M-06: an omitted productId is filled from the catalog record")
+    void testOmittedProductIdUsesCatalogRecord() throws Exception {
+        SagaOrchestrator.OrderItemDto item = new SagaOrchestrator.OrderItemDto(null, "SKU-001", 1);
+        SagaOrchestrator.CheckoutRequest req = new SagaOrchestrator.CheckoutRequest(
+                "user-212", List.of(item), "IDEM-M06-CATALOG-ID-" + UUID.randomUUID());
+
+        ResponseEntity<Map<String, Object>> resp = orderController.checkout(req, authFor(req.userId()));
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        assertEquals("CONFIRMED", resp.getBody().get("status"));
     }
 
     @Test

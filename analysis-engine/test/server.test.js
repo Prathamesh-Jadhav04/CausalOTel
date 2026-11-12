@@ -21,7 +21,8 @@ const {
     prometheusClient,
     incidentStore,
     incidentSpool,
-    serviceHealthProbe
+    serviceHealthProbe,
+    topologyService
 } = await import('../src/server.js');
 const { TempoError } = await import('../src/tempo_client.js');
 const { PrometheusError } = await import('../src/prometheus_client.js');
@@ -340,6 +341,122 @@ describe('Analysis Engine Server & Health Endpoints', () => {
         } finally {
             tempoClient.fetchTrace = original;
         }
+    });
+
+    test('GET /api/analysis/graph is derived from Tempo spans and reports cache metadata', async () => {
+        const originalList = tempoClient.listTraces;
+        const originalFetch = tempoClient.fetchTrace;
+        const originalProbe = serviceHealthProbe.probeAll;
+        topologyService.clearCache();
+        tempoClient.listTraces = async () => [{ traceId: 'trace-graph-1' }];
+        tempoClient.fetchTrace = async (traceId) => ({
+            traceId,
+            source: 'tempo',
+            synthetic: false,
+            totalSpans: 2,
+            spans: [
+                {
+                    spanId: 'span-root', parentSpanId: null, name: 'POST /checkout',
+                    serviceName: 'order-service', durationMs: 120, statusCode: 'OK'
+                },
+                {
+                    spanId: 'span-child', parentSpanId: 'span-root', name: 'POST /reserve',
+                    serviceName: 'inventory-service', durationMs: 40, statusCode: 'ERROR'
+                }
+            ]
+        });
+        serviceHealthProbe.probeAll = async () => ({
+            checkedAt: '2026-01-01T00:00:00.000Z',
+            upCount: 1,
+            totalCount: 2,
+            services: [
+                { name: 'order-service', status: 'UP', httpStatus: 200, latencyMs: 2 },
+                { name: 'inventory-service', status: 'UNREACHABLE', httpStatus: null, latencyMs: 1500, error: 'CONNECTION_REFUSED' }
+            ]
+        });
+
+        try {
+            const res = await fetch(`${baseUrl}/api/analysis/graph?window=15m&limit=5`);
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.equal(body.source, 'tempo');
+            assert.equal(body.window, '15m');
+            assert.equal(body.traceCount, 1);
+            assert.equal(body.cache.hit, false);
+            assert.deepEqual(
+                body.edges.map(edge => ({
+                    from: edge.from, to: edge.to, callCount: edge.callCount, errorCount: edge.errorCount
+                })),
+                [{ from: 'order-service', to: 'inventory-service', callCount: 1, errorCount: 1 }]
+            );
+            const inventoryNode = body.nodes.find(node => node.id === 'inventory-service');
+            assert.equal(inventoryNode.health.status, 'UNREACHABLE');
+            assert.equal(inventoryNode.health.error, 'CONNECTION_REFUSED');
+
+            const cachedRes = await fetch(`${baseUrl}/api/analysis/graph?window=15m&limit=5`);
+            const cachedBody = await cachedRes.json();
+            assert.equal(cachedBody.cache.hit, true);
+            assert.equal(cachedBody.generatedAt, body.generatedAt);
+            assert.deepEqual(cachedBody.edges, body.edges);
+        } finally {
+            tempoClient.listTraces = originalList;
+            tempoClient.fetchTrace = originalFetch;
+            serviceHealthProbe.probeAll = originalProbe;
+            topologyService.clearCache();
+        }
+    });
+
+    test('GET /api/analysis/graph returns an explicit empty graph when Tempo has no traces', async () => {
+        const originalList = tempoClient.listTraces;
+        const originalProbe = serviceHealthProbe.probeAll;
+        topologyService.clearCache();
+        tempoClient.listTraces = async () => [];
+        serviceHealthProbe.probeAll = async () => ({
+            checkedAt: new Date().toISOString(), upCount: 0, totalCount: 0, services: []
+        });
+
+        try {
+            const res = await fetch(`${baseUrl}/api/analysis/graph?window=1h`);
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.equal(body.source, 'tempo');
+            assert.equal(body.window, '1h');
+            assert.equal(body.traceCount, 0);
+            assert.deepEqual(body.nodes, []);
+            assert.deepEqual(body.edges, []);
+        } finally {
+            tempoClient.listTraces = originalList;
+            serviceHealthProbe.probeAll = originalProbe;
+            topologyService.clearCache();
+        }
+    });
+
+    test('GET /api/analysis/graph maps a Tempo outage to 503 problem details', async () => {
+        const originalList = tempoClient.listTraces;
+        topologyService.clearCache();
+        tempoClient.listTraces = async () => {
+            throw new TempoError('Tempo is unavailable', { status: 503, code: 'TEMPO_UNAVAILABLE' });
+        };
+
+        try {
+            const res = await fetch(`${baseUrl}/api/analysis/graph`);
+            assert.equal(res.status, 503);
+            assert.match(res.headers.get('content-type'), /application\/problem\+json/);
+            const problem = await res.json();
+            assert.equal(problem.code, 'TEMPO_UNAVAILABLE');
+            assert.equal(problem.instance, '/api/analysis/graph');
+        } finally {
+            tempoClient.listTraces = originalList;
+            topologyService.clearCache();
+        }
+    });
+
+    test('GET /api/analysis/graph rejects a malformed window', async () => {
+        topologyService.clearCache();
+        const res = await fetch(`${baseUrl}/api/analysis/graph?window=forever`);
+        assert.equal(res.status, 400);
+        const problem = await res.json();
+        assert.equal(problem.code, 'INVALID_WINDOW');
     });
 
     test('GET /api/analysis/native-core reports the real CMake target state', async () => {

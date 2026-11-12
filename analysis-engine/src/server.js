@@ -7,7 +7,7 @@ import { TempoClient } from './tempo_client.js';
 import { PrometheusClient } from './prometheus_client.js';
 import { RcaEngine } from './rca_engine.js';
 import { IncidentStore } from './incident_store.js';
-import { DependencyGraph } from './graph.js';
+import { ServiceGraphService } from './service_graph.js';
 import { ServiceHealthProbe } from './service_probe.js';
 import { nativeCoreStatus } from './native_core.js';
 
@@ -21,6 +21,10 @@ export const prometheusClient = new PrometheusClient();
 export const rcaEngine = new RcaEngine(tempoClient, prometheusClient);
 export const incidentStore = new IncidentStore(incidentSpool);
 export const serviceHealthProbe = new ServiceHealthProbe();
+export const topologyService = new ServiceGraphService({
+    tempoClient,
+    healthProbe: serviceHealthProbe
+});
 
 // Prometheus Metrics Collection
 client.collectDefaultMetrics({ prefix: 'causalotel_analysis_' });
@@ -229,20 +233,18 @@ app.post('/api/analysis/demo-trace', (req, res, next) => {
     });
 });
 
-// Dependency Graph Topology with Tarjan SCC
-app.get('/api/analysis/graph', (req, res) => {
-    const graph = new DependencyGraph();
-    // Default system microservices topology
-    graph.addEdge('dashboard', 'order-service');
-    graph.addEdge('dashboard', 'product-service');
-    graph.addEdge('dashboard', 'user-service');
-    graph.addEdge('order-service', 'inventory-service');
-    graph.addEdge('order-service', 'payment-service');
-    graph.addEdge('analysis-engine', 'order-service');
-    graph.addEdge('analysis-engine', 'inventory-service');
-    graph.addEdge('analysis-engine', 'payment-service');
-
-    res.json(graph.toJSON());
+// M-05: dependency graph derived from recent Tempo spans, with live health
+// metadata, a bounded time window, and an explicit short-lived cache.
+app.get('/api/analysis/graph', async (req, res, next) => {
+    try {
+        const graph = await topologyService.getGraph({
+            window: req.query.window || '15m',
+            limit: req.query.limit
+        });
+        res.json(graph);
+    } catch (err) {
+        next(err);
+    }
 });
 
 // Correlated Prometheus Metrics (explicit unavailable states, no fabrication)
