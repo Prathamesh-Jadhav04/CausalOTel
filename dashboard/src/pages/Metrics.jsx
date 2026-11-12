@@ -1,16 +1,28 @@
 import React, { useEffect, useState } from 'react';
 import {
-  BarChart3,
-  Activity,
   AlertTriangle,
-  CheckCircle2,
-  RefreshCw,
-  TrendingUp,
+  BarChart3,
   Clock,
-  Database
+  Database,
+  RefreshCw,
+  TrendingUp
 } from 'lucide-react';
 import api from '../lib/api.js';
 import { describeApiError, normalizeMetricsResponse } from '../lib/contracts.js';
+import {
+  Badge,
+  Button,
+  Chip,
+  EmptyState,
+  ErrorBanner,
+  GlassCard,
+  MetaChip,
+  Meter,
+  PageHeader,
+  StatCard,
+  StatusBadge,
+  cn
+} from '../components/ui.jsx';
 
 function formatLatency(value) {
   return value === null || value === undefined ? '—' : `${value} ms`;
@@ -22,6 +34,15 @@ function formatRate(value) {
 
 function formatPercent(value) {
   return value === null || value === undefined ? '—' : `${(value * 100).toFixed(2)}%`;
+}
+
+function MetricTile({ label, value, accent }) {
+  return (
+    <div className="rounded-xl border border-white/[0.055] bg-black/20 p-2.5">
+      <p className="text-[9px] text-white/40">{label}</p>
+      <p className={cn('mt-1 font-mono text-[12px] font-semibold', accent || 'text-white/74')}>{value}</p>
+    </div>
+  );
 }
 
 export default function Metrics() {
@@ -46,214 +67,206 @@ export default function Metrics() {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const services = metrics?.services || [];
   const displayedMetrics = selectedService === 'ALL'
     ? services
     : services.filter(service => service.service === selectedService);
+  const maxP99 = Math.max(
+    1,
+    ...displayedMetrics
+      .filter(service => service.available)
+      .map(service => Number(service.p99LatencyMs) || 0)
+  );
+  const maxRate = Math.max(
+    0.01,
+    ...displayedMetrics
+      .filter(service => service.available)
+      .map(service => Number(service.requestRate) || 0)
+  );
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-100 tracking-tight">System Metrics</h2>
-          <p className="text-sm text-slate-400 mt-1">
-            Live PromQL results from Prometheus. Services without samples are shown as unavailable, never estimated.
-          </p>
-        </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 transition shadow-sm"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          {loading ? 'Refreshing...' : 'Refresh Metrics'}
-        </button>
-      </div>
+    <div className="space-y-5 lg:space-y-6">
+      <PageHeader
+        eyebrow="Prometheus signals"
+        title="System metrics"
+        description="Live PromQL results from Prometheus. Services without samples are shown as unavailable, never estimated."
+        actions={
+          <Button onClick={load} loading={loading} variant="secondary">
+            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+            {loading ? 'Refreshing' : 'Refresh metrics'}
+          </Button>
+        }
+        meta={metrics ? (
+          <>
+            <MetaChip icon={Database}>source: {metrics.source}</MetaChip>
+            <MetaChip icon={Clock}>window: {metrics.window || '—'}</MetaChip>
+            <MetaChip>{metrics.generatedAt ? new Date(metrics.generatedAt).toLocaleString() : 'not generated'}</MetaChip>
+          </>
+        ) : null}
+      />
 
       {error && (
-        <div className="p-4 bg-rose-950/30 border border-rose-800 rounded-xl text-xs text-rose-300 flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-          <div>
-            <div className="font-semibold">Prometheus unavailable ({error.code || 'PROMETHEUS_UNAVAILABLE'})</div>
-            <div className="mt-1">{error.detail}</div>
-            <div className="mt-1 text-rose-400/80">
-              Start Prometheus and verify the scrape targets before trusting any metric view.
-            </div>
-          </div>
-        </div>
-      )}
-
-      {metrics && (
-        <div className="flex items-center gap-4 text-xs text-slate-400 font-mono">
-          <span>source: {metrics.source}</span>
-          <span>window: {metrics.window || '—'}</span>
-          <span>generated: {metrics.generatedAt ? new Date(metrics.generatedAt).toLocaleString() : '—'}</span>
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
-        <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
-          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Reporting Services</div>
-          <div className="text-2xl font-bold text-slate-100 mt-2 flex items-baseline gap-1.5">
-            <span>{metrics ? `${metrics.reportingCount} / ${metrics.totalCount}` : '—'}</span>
-          </div>
-          <div className="text-xs text-slate-400 mt-2 flex items-center gap-1">
-            <Database className="w-3.5 h-3.5" />
-            Services with real Prometheus samples
-          </div>
-        </div>
-
-        <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
-          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Throughput</div>
-          <div className="text-2xl font-bold text-slate-100 mt-2 flex items-baseline gap-1.5">
-            <span>{formatRate(metrics?.totalRequestRate)}</span>
-            <span className="text-xs text-slate-400 font-normal">req/s</span>
-          </div>
-          <div className="text-xs text-slate-400 mt-2 flex items-center gap-1">
-            <TrendingUp className="w-3.5 h-3.5" />
-            Sum of reporting services
-          </div>
-        </div>
-
-        <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
-          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Average Error Rate</div>
-          <div className={`text-2xl font-bold mt-2 ${
-            metrics?.averageErrorRate > 0.05 ? 'text-rose-400' : 'text-emerald-400'
-          }`}>
-            {formatPercent(metrics?.averageErrorRate)}
-          </div>
-          <div className="text-xs text-slate-400 mt-2">
-            Mean of reporting services
-          </div>
-        </div>
-
-        <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
-          <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Worst P99 Latency</div>
-          <div className={`text-2xl font-bold mt-2 ${
-            metrics?.worstP99LatencyMs > 500 ? 'text-amber-400' : 'text-slate-100'
-          }`}>
-            {formatLatency(metrics?.worstP99LatencyMs)}
-          </div>
-          <div className="text-xs text-slate-400 mt-2 flex items-center gap-1">
-            <Clock className="w-3.5 h-3.5" />
-            Highest P99 among reporting services
-          </div>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-2 overflow-x-auto pb-1">
-        <span className="text-xs text-slate-400 font-medium whitespace-nowrap">Filter Service:</span>
-        <button
-          onClick={() => setSelectedService('ALL')}
-          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-            selectedService === 'ALL'
-              ? 'bg-indigo-600 text-white shadow'
-              : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-          }`}
+        <ErrorBanner
+          title="Prometheus unavailable"
+          detail={error.detail}
+          code={error.code || 'PROMETHEUS_UNAVAILABLE'}
         >
-          All Services
-        </button>
-        {services.map((service) => (
-          <button
-            key={service.service}
-            onClick={() => setSelectedService(service.service)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium font-mono whitespace-nowrap transition ${
-              selectedService === service.service
-                ? 'bg-indigo-600 text-white shadow'
-                : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            {service.service}
-          </button>
-        ))}
+          <div className="mt-1 text-[10px] text-rose-200/55">
+            Start Prometheus and verify the scrape targets before trusting any metric view.
+          </div>
+        </ErrorBanner>
+      )}
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
+        <StatCard
+          label="Reporting services"
+          value={metrics ? `${metrics.reportingCount} / ${metrics.totalCount}` : '—'}
+          hint="Services with real Prometheus samples"
+          icon={Database}
+          tone="emerald"
+        />
+        <StatCard
+          label="Total throughput"
+          value={formatRate(metrics?.totalRequestRate)}
+          suffix="req/s"
+          hint="Sum of reporting services"
+          icon={TrendingUp}
+          tone="signal"
+        />
+        <StatCard
+          label="Average error rate"
+          value={formatPercent(metrics?.averageErrorRate)}
+          hint="Mean of reporting services"
+          icon={AlertTriangle}
+          tone={metrics?.averageErrorRate > 0.05 ? 'rose' : 'emerald'}
+          valueClassName={metrics?.averageErrorRate > 0.05 ? 'text-rose-300' : 'text-emerald-300'}
+        />
+        <StatCard
+          label="Worst P99 latency"
+          value={formatLatency(metrics?.worstP99LatencyMs)}
+          hint="Highest P99 among reporting services"
+          icon={Clock}
+          tone={metrics?.worstP99LatencyMs > 500 ? 'amber' : 'neutral'}
+        />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {displayedMetrics.map((service) => (
-          <div
-            key={service.service}
-            className="bg-slate-900 border border-slate-800 rounded-xl p-5 hover:border-slate-700 transition shadow-sm space-y-4"
-          >
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="font-mono font-semibold text-slate-100 text-base">{service.service}</h3>
-                <span className="text-xs text-indigo-400 font-mono">
-                  {service.port === null ? 'port unknown' : `Port :${service.port}`}
-                </span>
-              </div>
-              <span
-                className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                  !service.available
-                    ? 'bg-slate-800 border border-slate-700 text-slate-400'
-                    : service.status === 'HEALTHY'
-                      ? 'bg-emerald-950/60 border border-emerald-800 text-emerald-300'
-                      : 'bg-rose-950/80 border border-rose-800 text-rose-300'
-                }`}
+      {metrics && services.length > 0 && (
+        <GlassCard className="p-3.5 sm:p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="mr-1 text-[9px] font-semibold uppercase tracking-[0.16em] text-white/40">Filter service</span>
+            <Chip active={selectedService === 'ALL'} onClick={() => setSelectedService('ALL')}>
+              All services
+            </Chip>
+            {services.map((service) => (
+              <Chip
+                key={service.service}
+                active={selectedService === service.service}
+                onClick={() => setSelectedService(service.service)}
+                className="font-mono"
               >
-                {service.available ? service.status : 'UNAVAILABLE'}
-              </span>
+                {service.service}
+              </Chip>
+            ))}
+          </div>
+        </GlassCard>
+      )}
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 lg:gap-4">
+        {displayedMetrics.map((service, index) => (
+          <GlassCard
+            key={service.service}
+            interactive
+            className={cn('flex flex-col p-4 sm:p-5', index < 3 ? 'stagger-1' : 'stagger-2', 'animate-fade-up')}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="break-all font-mono text-[13px] font-semibold text-white/88">{service.service}</h2>
+                <p className="mt-0.5 font-mono text-[10px] text-white/40">
+                  {service.port === null ? 'port unknown' : `Port :${service.port}`}
+                </p>
+              </div>
+              <StatusBadge status={service.available ? service.status : 'UNAVAILABLE'} />
             </div>
 
             {!service.available ? (
-              <div className="py-4 border-y border-slate-800 text-xs text-slate-400 space-y-1">
-                <div className="flex items-center gap-1.5 text-amber-400 font-medium">
-                  <AlertTriangle className="w-3.5 h-3.5" />
+              <div className="mt-4 rounded-2xl border border-amber-400/15 bg-amber-400/[0.045] p-3">
+                <div className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-200">
+                  <AlertTriangle className="h-3.5 w-3.5" />
                   No metric samples
                 </div>
-                <div className="font-mono text-[11px] text-slate-500">reason: {service.reason || 'NO_METRICS'}</div>
+                <p className="mt-1 break-all font-mono text-[10px] text-white/40">reason: {service.reason || 'NO_METRICS'}</p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-3 py-3 border-y border-slate-800 text-xs">
-                <div>
-                  <div className="text-slate-500">Request rate</div>
-                  <div className="text-slate-200 font-semibold font-mono text-sm mt-0.5">
-                    {formatRate(service.requestRate)} req/s
+              <>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <MetricTile label="Request rate" value={`${formatRate(service.requestRate)} req/s`} accent="text-white/78" />
+                  <MetricTile
+                    label="Error rate"
+                    value={formatPercent(service.errorRate)}
+                    accent={service.errorRate > 0 ? 'text-rose-300' : 'text-emerald-300'}
+                  />
+                  <MetricTile label="P50 latency" value={formatLatency(service.p50LatencyMs)} />
+                  <MetricTile label="P95 latency" value={formatLatency(service.p95LatencyMs)} />
+                  <MetricTile
+                    label="P99 latency"
+                    value={formatLatency(service.p99LatencyMs)}
+                    accent={service.p99LatencyMs > 500 ? 'text-amber-300' : 'text-white/78'}
+                  />
+                  <MetricTile label="Status" value={service.status} accent="text-emerald-300" />
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  <div>
+                    <div className="mb-1.5 flex items-center justify-between text-[9px] text-white/40">
+                      <span>Request volume</span>
+                      <span className="font-mono text-white/50">{formatRate(service.requestRate)} req/s</span>
+                    </div>
+                    <Meter value={service.requestRate} max={maxRate} tone="signal" />
+                  </div>
+                  <div>
+                    <div className="mb-1.5 flex items-center justify-between text-[9px] text-white/40">
+                      <span>P99 relative to worst</span>
+                      <span className="font-mono text-white/50">{formatLatency(service.p99LatencyMs)}</span>
+                    </div>
+                    <Meter value={service.p99LatencyMs} max={maxP99} tone={service.p99LatencyMs > 500 ? 'amber' : 'sky'} />
                   </div>
                 </div>
-                <div>
-                  <div className="text-slate-500">Error rate</div>
-                  <div className={`font-semibold font-mono text-sm mt-0.5 ${
-                    service.errorRate > 0 ? 'text-rose-400' : 'text-emerald-400'
-                  }`}>
-                    {formatPercent(service.errorRate)}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-slate-500">P50 latency</div>
-                  <div className="text-slate-300 font-mono mt-0.5">{formatLatency(service.p50LatencyMs)}</div>
-                </div>
-                <div>
-                  <div className="text-slate-500">P95 latency</div>
-                  <div className="text-slate-300 font-mono mt-0.5">{formatLatency(service.p95LatencyMs)}</div>
-                </div>
-                <div>
-                  <div className="text-slate-500">P99 latency</div>
-                  <div className={`font-mono font-semibold mt-0.5 ${
-                    service.p99LatencyMs > 500 ? 'text-amber-400' : 'text-slate-300'
-                  }`}>
-                    {formatLatency(service.p99LatencyMs)}
-                  </div>
-                </div>
-              </div>
+              </>
             )}
 
-            <div className="flex items-center justify-between text-xs text-slate-400">
+            <div className="mt-auto flex items-center justify-between border-t border-white/[0.06] pt-3 text-[10px] text-white/36">
               <span>Source</span>
-              <span className="font-mono text-slate-300">Prometheus</span>
+              <span className="font-mono text-white/54">Prometheus</span>
             </div>
-          </div>
+          </GlassCard>
         ))}
       </div>
 
       {!loading && !error && services.length === 0 && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-12 text-center text-slate-400">
-          <BarChart3 className="w-8 h-8 text-slate-500 mx-auto mb-2" />
-          <p className="text-base font-medium text-slate-300">No services reported</p>
-          <p className="text-xs text-slate-500 mt-1">Prometheus returned an empty service set.</p>
-        </div>
+        <EmptyState
+          icon={BarChart3}
+          title="No services reported"
+          description="Prometheus returned an empty service set."
+          className="py-16"
+        />
       )}
+
+      {metrics && displayedMetrics.length === 0 && services.length > 0 && (
+        <EmptyState
+          icon={BarChart3}
+          title="No metrics for this service"
+          description="Select another service or clear the filter."
+          className="py-12"
+        />
+      )}
+
+      <div className="flex flex-wrap items-center gap-2 text-[10px] text-white/32">
+        <Badge tone="signal" dot>LIVE PROMQL</Badge>
+        Values are rendered exactly as returned; unavailable samples are never estimated.
+      </div>
     </div>
   );
 }

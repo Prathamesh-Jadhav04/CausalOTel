@@ -1,17 +1,28 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Server,
-  Database,
-  Radio,
-  Cpu,
-  HardDrive,
-  CheckCircle2,
   AlertTriangle,
+  CheckCircle2,
+  Cpu,
+  Database,
+  HardDrive,
+  Radio,
   RefreshCw,
+  Server,
   Terminal
 } from 'lucide-react';
 import api from '../lib/api.js';
 import { describeApiError, normalizeServiceHealth } from '../lib/contracts.js';
+import {
+  Badge,
+  Button,
+  CardHeader,
+  ErrorBanner,
+  GlassCard,
+  MetaChip,
+  PageHeader,
+  StatusBadge,
+  cn
+} from '../components/ui.jsx';
 
 const serviceConfigs = [
   { name: 'user-service', port: 8081, tech: 'Java 25 / Spring Boot 4.0', db: 'user.db (WAL)' },
@@ -67,174 +78,184 @@ export default function Settings() {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const byName = new Map((health?.services || []).map(service => [service.name, service]));
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-100 tracking-tight">System Settings & Topology</h2>
-          <p className="text-sm text-slate-400 mt-1">
-            Service registry, telemetry ports, storage layout, and real native-core build state.
-          </p>
-        </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow-sm"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          {loading ? 'Probing...' : 'Refresh Status'}
-        </button>
-      </div>
+    <div className="space-y-5 lg:space-y-6">
+      <PageHeader
+        eyebrow="System registry"
+        title="Settings & topology"
+        description="Service registry, telemetry ports, storage layout, and real native-core build state."
+        actions={
+          <Button onClick={load} loading={loading} variant="secondary">
+            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+            {loading ? 'Probing' : 'Refresh status'}
+          </Button>
+        }
+        meta={
+          <>
+            <MetaChip icon={Server}>{serviceConfigs.length} services</MetaChip>
+            <MetaChip icon={Radio}>{telemetryConfigs.length} telemetry endpoints</MetaChip>
+          </>
+        }
+      />
 
       {healthError && (
-        <div className="p-4 bg-rose-950/30 border border-rose-800 rounded-xl text-xs text-rose-300 flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-          <div>
-            <div className="font-semibold">Health probe unavailable ({healthError.code || 'ERROR'})</div>
-            <div className="mt-1">{healthError.detail}</div>
-          </div>
-        </div>
+        <ErrorBanner
+          title="Health probe unavailable"
+          detail={healthError.detail}
+          code={healthError.code || 'ERROR'}
+        />
       )}
 
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wider mb-4 flex items-center gap-2">
-          <Server className="w-4 h-4 text-indigo-400" />
-          Service Port Allocation & Database Ownership
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <GlassCard className="p-4 sm:p-6">
+        <CardHeader
+          icon={Server}
+          eyebrow="Registry"
+          title="Service port allocation & database ownership"
+          description="Static topology metadata paired with the latest live probe result."
+        />
+        <div className="mt-4 grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
           {serviceConfigs.map((service) => {
             const live = byName.get(service.name);
             return (
               <div
                 key={service.name}
-                className="p-4 bg-slate-950/70 border border-slate-800 rounded-lg space-y-2 text-xs"
+                className="rounded-2xl border border-white/[0.065] bg-white/[0.025] p-3.5 transition hover:border-white/12 hover:bg-white/[0.04]"
               >
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-slate-200 text-sm">{service.name}</span>
-                  <span className="font-mono text-indigo-400 font-bold">Port :{service.port}</span>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="break-all font-mono text-[12px] font-semibold text-white/84">{service.name}</span>
+                  <Badge tone="signal">:{service.port}</Badge>
                 </div>
-                <div className="text-slate-400">
-                  <span className="text-slate-500">Stack:</span> {service.tech}
+                <div className="mt-2 space-y-1.5 text-[10px] text-white/48">
+                  <p className="break-words"><span className="text-white/32">Stack:</span> {service.tech}</p>
+                  <p className="flex items-center gap-1.5">
+                    <Database className="h-3 w-3 shrink-0 text-white/32" />
+                    <span className="truncate">{service.db}</span>
+                  </p>
                 </div>
-                <div className="text-slate-400 flex items-center gap-1">
-                  <Database className="w-3 h-3 text-slate-500" />
-                  {service.db}
-                </div>
-                <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[11px]">
-                  <span className="text-slate-500">Live probe:</span>
-                  <span className={`font-semibold flex items-center gap-1 ${
-                    live?.status === 'UP'
-                      ? 'text-emerald-400'
-                      : live?.status === 'DOWN'
-                        ? 'text-amber-400'
-                        : 'text-rose-400'
-                  }`}>
+                <div className="mt-3 flex items-center justify-between gap-2 border-t border-white/[0.06] pt-2.5">
+                  <span className="text-[9px] uppercase tracking-[0.12em] text-white/32">Live probe</span>
+                  <span className="inline-flex items-center gap-1.5">
                     {live?.status === 'UP'
-                      ? <CheckCircle2 className="w-3 h-3" />
-                      : <AlertTriangle className="w-3 h-3" />}
-                    {live ? `${live.status}${live.latencyMs === null ? '' : ` · ${live.latencyMs}ms`}` : 'NOT REPORTED'}
+                      ? <CheckCircle2 className="h-3 w-3 text-emerald-400" />
+                      : <AlertTriangle className="h-3 w-3 text-amber-400" />}
+                    <span className={cn(
+                      'text-[10px] font-semibold',
+                      live?.status === 'UP' ? 'text-emerald-300' : live?.status === 'DOWN' ? 'text-amber-300' : 'text-rose-300'
+                    )}>
+                      {live ? `${live.status}${live.latencyMs === null ? '' : ` · ${live.latencyMs}ms`}` : 'NOT REPORTED'}
+                    </span>
                   </span>
                 </div>
               </div>
             );
           })}
         </div>
-      </div>
+      </GlassCard>
 
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wider mb-4 flex items-center gap-2">
-          <Radio className="w-4 h-4 text-indigo-400" />
-          OpenTelemetry Collectors & Telemetry Sinks
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <GlassCard className="p-4 sm:p-6">
+        <CardHeader
+          icon={Radio}
+          eyebrow="Telemetry"
+          title="OpenTelemetry collectors & sinks"
+          description="Local receiver and query ports used by the dashboard's live data paths."
+        />
+        <div className="mt-4 grid grid-cols-1 gap-2.5 md:grid-cols-2">
           {telemetryConfigs.map((telemetry) => (
             <div
               key={`${telemetry.name}-${telemetry.port}`}
-              className="p-4 bg-slate-950/70 border border-slate-800 rounded-lg flex items-center justify-between text-xs"
+              className="flex flex-col gap-2 rounded-2xl border border-white/[0.065] bg-white/[0.025] p-3.5 sm:flex-row sm:items-center sm:justify-between"
             >
-              <div>
-                <div className="font-semibold text-slate-200 text-sm">{telemetry.name}</div>
-                <div className="text-slate-400 mt-0.5">{telemetry.protocol}</div>
+              <div className="min-w-0">
+                <p className="text-[12px] font-semibold text-white/78">{telemetry.name}</p>
+                <p className="mt-0.5 text-[10px] text-white/44">{telemetry.protocol}</p>
               </div>
-              <span className="font-mono text-indigo-400 font-bold text-sm bg-indigo-950/40 border border-indigo-900/60 px-3 py-1 rounded-md">
-                Port :{telemetry.port}
-              </span>
+              <Badge tone="signal" className="shrink-0 self-start sm:self-auto">Port :{telemetry.port}</Badge>
             </div>
           ))}
         </div>
-      </div>
+      </GlassCard>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-3">
-          <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wider mb-2 flex items-center gap-2">
-            <HardDrive className="w-4 h-4 text-indigo-400" />
-            File Storage & Crash Spool Isolation
-          </h3>
-          <div className="space-y-2 text-xs font-mono">
-            <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
-              <div className="text-slate-400 text-[11px] mb-1">SQLite data directory:</div>
-              <div className="text-indigo-300 break-all">%LOCALAPPDATA%\CausalOTel\data\</div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-5">
+        <GlassCard className="p-4 sm:p-6">
+          <CardHeader
+            icon={HardDrive}
+            eyebrow="Storage"
+            title="File storage & crash spool isolation"
+          />
+          <div className="mt-4 space-y-2 font-mono">
+            <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3.5">
+              <p className="text-[9px] uppercase tracking-[0.12em] text-white/36">SQLite data directory</p>
+              <p className="mt-1 break-all text-[11px] text-signal-300/80">%LOCALAPPDATA%\CausalOTel\data\</p>
             </div>
-            <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
-              <div className="text-slate-400 text-[11px] mb-1">Incident spool directory:</div>
-              <div className="text-indigo-300 break-all">%LOCALAPPDATA%\CausalOTel\spool\incidents\</div>
+            <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3.5">
+              <p className="text-[9px] uppercase tracking-[0.12em] text-white/36">Incident spool directory</p>
+              <p className="mt-1 break-all text-[11px] text-signal-300/80">%LOCALAPPDATA%\CausalOTel\spool\incidents\</p>
             </div>
-            <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
-              <div className="text-slate-400 text-[11px] mb-1">Tempo data / WAL:</div>
-              <div className="text-indigo-300 break-all">%LOCALAPPDATA%\CausalOTel\tempo-data\</div>
+            <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3.5">
+              <p className="text-[9px] uppercase tracking-[0.12em] text-white/36">Tempo data / WAL</p>
+              <p className="mt-1 break-all text-[11px] text-signal-300/80">%LOCALAPPDATA%\CausalOTel\tempo-data\</p>
             </div>
           </div>
-        </div>
+        </GlassCard>
 
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-3">
-          <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wider mb-2 flex items-center gap-2">
-            <Cpu className="w-4 h-4 text-indigo-400" />
-            Native Sweep-Line Core
-          </h3>
+        <GlassCard className="p-4 sm:p-6">
+          <CardHeader
+            icon={Cpu}
+            eyebrow="Native core"
+            title="Sweep-line interval union"
+            action={nativeCore && (
+              <StatusBadge status={nativeCore.available ? 'AVAILABLE' : 'NOT BUILT'} />
+            )}
+          />
 
           {nativeError && (
-            <div className="p-3 bg-rose-950/30 border border-rose-800 rounded-lg text-xs text-rose-300">
-              Native core status unavailable: {nativeError.detail}
-            </div>
+            <ErrorBanner
+              title="Native core status unavailable"
+              detail={nativeError.detail}
+              className="mt-4"
+            />
           )}
 
           {nativeCore && (
-            <div className="space-y-2 text-xs font-mono">
-              <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
-                <div className="text-slate-400 text-[11px] mb-1">CMake target:</div>
-                <div className="text-indigo-300 font-semibold">{nativeCore.target}</div>
+            <div className="mt-4 space-y-2 font-mono">
+              <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3.5">
+                <p className="text-[9px] uppercase tracking-[0.12em] text-white/36">CMake target</p>
+                <p className="mt-1 break-all text-[11px] font-semibold text-signal-300/80">{nativeCore.target}</p>
               </div>
 
-              <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
-                <div className="text-slate-400 text-[11px] mb-1">Build output:</div>
+              <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3.5">
+                <p className="text-[9px] uppercase tracking-[0.12em] text-white/36">Build output</p>
                 {nativeCore.available ? (
-                  <div className="text-emerald-400 font-semibold break-all">{nativeCore.binary}</div>
+                  <p className="mt-1 break-all text-[11px] font-semibold text-emerald-300">{nativeCore.binary}</p>
                 ) : (
-                  <div className="text-amber-400 font-semibold">NOT BUILT</div>
+                  <p className="mt-1 text-[11px] font-semibold text-amber-300">NOT BUILT</p>
                 )}
               </div>
 
               {!nativeCore.available && (
-                <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
-                  <div className="text-slate-400 text-[11px] mb-1 flex items-center gap-1">
-                    <Terminal className="w-3 h-3" />
-                    Build command:
-                  </div>
-                  <div className="text-slate-300 break-all">{nativeCore.buildCommand}</div>
+                <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3.5">
+                  <p className="flex items-center gap-1 text-[9px] uppercase tracking-[0.12em] text-white/36">
+                    <Terminal className="h-3 w-3" />
+                    Build command
+                  </p>
+                  <p className="mt-1 break-all text-[11px] text-white/62">{nativeCore.buildCommand}</p>
                 </div>
               )}
 
-              <div className="p-3 bg-slate-950 rounded-lg border border-slate-800">
-                <div className="text-slate-400 text-[11px] mb-1">Algorithm:</div>
-                <div className="text-indigo-300">O(N log N) interval union; pure-JS fallback when absent</div>
+              <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3.5">
+                <p className="text-[9px] uppercase tracking-[0.12em] text-white/36">Algorithm</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-signal-300/80">
+                  O(N log N) interval union; pure-JS fallback when absent
+                </p>
               </div>
             </div>
           )}
-        </div>
+        </GlassCard>
       </div>
     </div>
   );

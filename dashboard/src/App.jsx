@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Navbar from './components/Navbar';
+import BottomNav from './components/BottomNav';
 import Overview from './pages/Overview';
 import Services from './pages/Services';
 import DependencyGraph from './pages/DependencyGraph';
@@ -25,12 +26,13 @@ function Shell() {
   }
 
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-100 font-sans overflow-hidden">
+    <div className="app-shell relative flex h-[100dvh] overflow-hidden text-white">
+      <div className="ambient-glow" aria-hidden="true" />
       <Sidebar />
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <div className="relative z-10 flex min-w-0 flex-1 flex-col">
         <Navbar />
-        <main className="flex-1 overflow-y-auto p-8 bg-slate-950">
-          <div className="max-w-7xl mx-auto">
+        <main className="relative flex-1 overflow-y-auto overflow-x-hidden px-4 pb-[calc(env(safe-area-inset-bottom)+112px)] pt-4 sm:px-6 sm:pt-5 lg:px-9 lg:pb-10 lg:pt-1">
+          <div className="mx-auto w-full max-w-[1440px]">
             <Routes>
               <Route path={ROUTE_PATHS.overview} element={<Overview />} />
               <Route path={ROUTE_PATHS.services} element={<Services />} />
@@ -48,6 +50,7 @@ function Shell() {
             </Routes>
           </div>
         </main>
+        <BottomNav />
       </div>
     </div>
   );

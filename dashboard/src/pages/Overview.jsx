@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-  CheckCircle2, 
-  AlertTriangle, 
-  ShoppingCart, 
+import {
+  AlertTriangle,
   ArrowRight,
-  RefreshCw,
+  Activity,
+  CheckCircle2,
   Database,
-  Activity
+  RefreshCw,
+  Server,
+  ShoppingCart
 } from 'lucide-react';
 import api from '../lib/api.js';
 import { useAuth } from '../lib/AuthContext.jsx';
@@ -16,6 +17,22 @@ import {
   normalizeIncidentList,
   normalizeServiceHealth
 } from '../lib/contracts.js';
+import { rcaDetailPath } from '../lib/routes.js';
+import {
+  Badge,
+  Button,
+  CardHeader,
+  ErrorBanner,
+  GlassCard,
+  LoadingBlock,
+  MetaChip,
+  PageHeader,
+  ProgressRing,
+  StatCard,
+  StatusBadge,
+  cn,
+  useMediaQuery
+} from '../components/ui.jsx';
 
 export default function Overview() {
   const navigate = useNavigate();
@@ -31,6 +48,7 @@ export default function Overview() {
   const [loading, setLoading] = useState(true);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutResult, setCheckoutResult] = useState(null);
+  const narrow = useMediaQuery('(max-width: 379px)');
 
   const load = async () => {
     setLoading(true);
@@ -81,10 +99,41 @@ export default function Overview() {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const activeIncidents = incidents ? incidents.filter(incident => incident.status === 'ACTIVE') : null;
   const latestIncident = incidents?.[0] || null;
+  const serviceRows = health?.services || [];
+  const upCount = health?.upCount ?? 0;
+  const totalCount = health?.totalCount ?? 0;
+  const healthRatio = totalCount > 0 ? upCount / totalCount : 0;
+
+  const statusLabel = healthError
+    ? 'Health probes degraded'
+    : incidentsError
+      ? 'Incident store unavailable'
+      : analysisError
+        ? 'Analysis engine unavailable'
+        : activeIncidents?.length
+          ? 'Active incident detected'
+          : health && totalCount > 0 && upCount === totalCount
+            ? 'All probed services online'
+            : health
+              ? 'Partial service availability'
+              : 'Awaiting live telemetry';
+
+  const statusDetail = healthError
+    ? healthError.detail
+    : incidentsError
+      ? incidentsError.detail
+      : analysisError
+        ? analysisError.detail
+        : latestIncident
+          ? `${latestIncident.culpritService} · ${latestIncident.rootCauseType}`
+          : health
+            ? `${upCount} of ${totalCount} live probes passing${health.checkedAt ? ` · checked ${new Date(health.checkedAt).toLocaleTimeString()}` : ''}`
+            : 'Connect the local stack to populate live health probes.';
 
   const handleQuickCheckout = async () => {
     if (!product) {
@@ -111,211 +160,226 @@ export default function Overview() {
     }
   };
 
-  const serviceRows = health?.services || [];
-
   return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-100 tracking-tight">System Overview</h2>
-          <p className="text-sm text-slate-400 mt-1">
-            Live probes, recorded incidents, and real checkout execution. No mock operational data.
-          </p>
+    <div className="space-y-5 lg:space-y-6">
+      <PageHeader
+        eyebrow="Live system pulse"
+        title="System overview"
+        description="Live probes, recorded incidents, and real checkout execution. No mock operational data."
+        actions={
+          <Button onClick={load} loading={loading} variant="secondary">
+            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+            {loading ? 'Refreshing' : 'Refresh'}
+          </Button>
+        }
+        meta={
+          <>
+            <MetaChip icon={Activity}>Real-time observability</MetaChip>
+            <MetaChip icon={Server}>{health ? `${upCount}/${totalCount} services online` : 'Probing services'}</MetaChip>
+          </>
+        }
+      />
+
+      <GlassCard className="relative overflow-hidden p-5 sm:p-6 stagger-1 animate-fade-up">
+        <div className="signal-sheen pointer-events-none absolute inset-0" />
+        <div className="relative flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex min-w-0 items-center gap-3.5 sm:gap-5">
+            <ProgressRing
+              ratio={healthRatio}
+              display={health ? `${upCount}/${totalCount}` : '—'}
+              caption="online"
+              tone={healthError ? 'amber' : 'emerald'}
+              size={narrow ? 88 : 100}
+              stroke={narrow ? 7 : 8}
+            />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={cn('live-dot', healthError || incidentsError ? 'is-signal' : '')} />
+                <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-white/48">
+                  {loading ? 'Syncing live state' : 'Current state'}
+                </span>
+                {activeIncidents?.length > 0 && <Badge tone="rose" dot>{activeIncidents.length} ACTIVE</Badge>}
+              </div>
+              <h2 className="mt-2 text-xl font-semibold tracking-[-0.03em] text-white sm:text-2xl">{statusLabel}</h2>
+              <p className="mt-1.5 max-w-xl text-xs leading-relaxed text-white/52">{statusDetail}</p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <MetaChip icon={Database}>{incidents ? `${incidents.length} recorded` : 'Store loading'}</MetaChip>
+                <MetaChip icon={Activity}>{analysisError ? 'Engine unavailable' : analysis?.status || 'Engine unknown'}</MetaChip>
+              </div>
+            </div>
+          </div>
+
+          <div className="w-full shrink-0 xl:w-[320px]">
+            <div className="glass-inset rounded-2xl p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-white/42">Latest incident</p>
+                {latestIncident && <StatusBadge status={latestIncident.severity} />}
+              </div>
+              {incidentsError ? (
+                <p className="mt-3 text-xs leading-relaxed text-rose-200/75">Incident store unavailable: {incidentsError.detail}</p>
+              ) : latestIncident ? (
+                <button
+                  type="button"
+                  onClick={() => navigate(rcaDetailPath(latestIncident.incidentId))}
+                  className="mt-3 block w-full text-left"
+                >
+                  <p className="font-mono text-sm font-semibold text-white/90">{latestIncident.culpritService}</p>
+                  <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-white/50">{latestIncident.summary}</p>
+                  <span className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-semibold text-signal-300">
+                    Inspect RCA <ArrowRight className="h-3.5 w-3.5" />
+                  </span>
+                </button>
+              ) : (
+                <p className="mt-3 text-xs leading-relaxed text-white/46">
+                  {loading ? 'Loading incident records...' : 'No incident records exist yet. Analyze a real Tempo trace to produce the first root cause.'}
+                </p>
+              )}
+            </div>
+          </div>
         </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 transition shadow-sm"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          {loading ? 'Refreshing...' : 'Refresh'}
-        </button>
+      </GlassCard>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
+        <StatCard
+          label="Services online"
+          value={health ? `${upCount} / ${totalCount}` : '—'}
+          hint={healthError ? 'Probe unavailable' : 'Live health probes'}
+          icon={CheckCircle2}
+          tone="emerald"
+          className="stagger-1 animate-fade-up"
+        />
+        <StatCard
+          label="Active incidents"
+          value={activeIncidents ? activeIncidents.length : '—'}
+          hint={incidentsError ? 'Store unavailable' : latestIncident ? latestIncident.rootCauseType : 'None recorded'}
+          icon={AlertTriangle}
+          tone="rose"
+          className="stagger-2 animate-fade-up"
+        />
+        <StatCard
+          label="Recorded incidents"
+          value={incidents ? incidents.length : '—'}
+          hint="Durable disk spool"
+          icon={Database}
+          tone="signal"
+          className="stagger-3 animate-fade-up"
+        />
+        <StatCard
+          label="Analysis engine"
+          value={analysisError ? 'UNAVAILABLE' : analysis?.status || '—'}
+          hint={analysis ? `${analysis.pendingIncidentsCount} pending` : analysisError?.detail || 'No analysis state'}
+          icon={Activity}
+          tone="amber"
+          compact
+          className="stagger-4 animate-fade-up"
+        />
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
-        <div className="bg-slate-800/50 border border-slate-700/60 p-5 rounded-xl">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Services Online</span>
-            <span className="p-2 bg-emerald-500/10 text-emerald-400 rounded-lg">
-              <CheckCircle2 className="w-4 h-4" />
-            </span>
-          </div>
-          <div className="mt-4 flex items-baseline gap-2">
-            <span className="text-3xl font-extrabold text-slate-100">
-              {health ? `${health.upCount} / ${health.totalCount}` : '—'}
-            </span>
-            <span className={`text-xs font-medium ${healthError ? 'text-rose-400' : 'text-emerald-400'}`}>
-              {healthError ? 'Probe unavailable' : 'Live health probes'}
-            </span>
-          </div>
-        </div>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3 lg:gap-5">
+        <GlassCard className="p-4 sm:p-6 xl:col-span-2">
+          <CardHeader
+            icon={Server}
+            eyebrow="Service mesh"
+            title="Microservices health matrix"
+            description="Live /health/live probe results from the analysis engine."
+            action={
+              <button
+                type="button"
+                onClick={() => navigate('/services')}
+                className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-white/54 transition hover:text-signal-300"
+              >
+                View details <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+            }
+          />
 
-        <div className="bg-slate-800/50 border border-slate-700/60 p-5 rounded-xl">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Active Incidents</span>
-            <span className="p-2 bg-rose-500/10 text-rose-400 rounded-lg">
-              <AlertTriangle className="w-4 h-4" />
-            </span>
-          </div>
-          <div className="mt-4 flex items-baseline gap-2">
-            <span className="text-3xl font-extrabold text-slate-100">
-              {activeIncidents ? activeIncidents.length : '—'}
-            </span>
-            <span className={`text-xs font-medium ${incidentsError ? 'text-rose-400' : 'text-slate-400'}`}>
-              {incidentsError
-                ? 'Store unavailable'
-                : latestIncident
-                  ? latestIncident.rootCauseType
-                  : 'None recorded'}
-            </span>
-          </div>
-        </div>
-
-        <div className="bg-slate-800/50 border border-slate-700/60 p-5 rounded-xl">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Recorded Incidents</span>
-            <span className="p-2 bg-indigo-500/10 text-indigo-400 rounded-lg">
-              <Database className="w-4 h-4" />
-            </span>
-          </div>
-          <div className="mt-4 flex items-baseline gap-2">
-            <span className="text-3xl font-extrabold text-slate-100">
-              {incidents ? incidents.length : '—'}
-            </span>
-            <span className="text-xs text-slate-400 font-medium">Durable disk spool</span>
-          </div>
-        </div>
-
-        <div className="bg-slate-800/50 border border-slate-700/60 p-5 rounded-xl">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Analysis Engine</span>
-            <span className="p-2 bg-amber-500/10 text-amber-400 rounded-lg">
-              <Activity className="w-4 h-4" />
-            </span>
-          </div>
-          <div className="mt-4 flex items-baseline gap-2">
-            <span className={`text-xl font-bold ${analysisError ? 'text-rose-400' : 'text-slate-100'}`}>
-              {analysisError ? 'UNAVAILABLE' : analysis?.status || '—'}
-            </span>
-            <span className="text-xs text-slate-400 font-mono">
-              {analysis ? `${analysis.pendingIncidentsCount} pending` : analysisError?.detail || ''}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Services Grid & Quick Checkout */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-slate-800/50 border border-slate-700/60 rounded-xl p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-slate-200">Microservices Health Matrix</h3>
-            <button
-              onClick={() => navigate('/services')}
-              className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium"
-            >
-              View Details <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          {healthError ? (
-            <div className="p-4 bg-rose-950/30 border border-rose-800 rounded-lg text-xs text-rose-300">
-              Health probe failed: {healthError.detail}
-            </div>
-          ) : serviceRows.length === 0 ? (
-            <div className="p-4 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-400">
-              {loading ? 'Probing services...' : 'No services reported by the probe.'}
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-700/50">
-              {serviceRows.map((svc) => (
-                <div key={svc.name} className="py-3 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-2.5 h-2.5 rounded-full ${
-                      svc.status === 'UP' ? 'bg-emerald-400'
-                        : svc.status === 'DOWN' ? 'bg-amber-400'
-                          : 'bg-rose-400'
-                    }`}></div>
-                    <div>
-                      <span className="text-sm font-medium text-slate-200">{svc.name}</span>
-                      <span className="text-xs text-slate-500 block font-mono">Port :{svc.port}</span>
+          <div className="mt-4">
+            {healthError ? (
+              <ErrorBanner title="Health probe failed" detail={healthError.detail} />
+            ) : serviceRows.length === 0 ? (
+              <div className="glass-inset rounded-2xl p-4 text-xs text-white/50">
+                {loading ? 'Probing services...' : 'No services reported by the probe.'}
+              </div>
+            ) : (
+              <div className="divide-y divide-white/[0.055]">
+                {serviceRows.map((svc) => (
+                  <div key={svc.name} className="flex min-w-0 items-center gap-3 py-3 first:pt-0 last:pb-0">
+                    <span className={cn(
+                      'h-2 w-2 shrink-0 rounded-full',
+                      svc.status === 'UP'
+                        ? 'bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.55)]'
+                        : svc.status === 'DOWN'
+                          ? 'bg-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.5)]'
+                          : 'bg-rose-400 shadow-[0_0_12px_rgba(251,113,133,0.5)]'
+                    )} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[12px] font-semibold text-white/84">{svc.name}</p>
+                      <p className="mt-0.5 font-mono text-[10px] text-white/40">Port :{svc.port}</p>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <span className="text-xs text-slate-400 font-mono">
+                    <span className="hidden font-mono text-[10px] text-white/50 sm:block">
                       {svc.latencyMs === null ? '—' : `${svc.latencyMs}ms`}
                     </span>
-                    <span className={`px-2.5 py-0.5 text-xs font-semibold rounded-full border ${
-                      svc.status === 'UP'
-                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                        : svc.status === 'DOWN'
-                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                          : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
-                    }`}>
-                      {svc.status}
-                    </span>
+                    <StatusBadge status={svc.status} />
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Live Checkout */}
-        <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl p-6 flex flex-col justify-between">
-          <div>
-            <h3 className="font-semibold text-slate-200 flex items-center gap-2">
-              <ShoppingCart className="w-4 h-4 text-indigo-400" />
-              Live Checkout Test
-            </h3>
-            <p className="text-xs text-slate-400 mt-2">
-              Executes the real saga: order → inventory reserve → payment charge → inventory commit.
-            </p>
-
-            {productError ? (
-              <div className="mt-4 p-3 bg-rose-950/30 border border-rose-800 rounded-lg text-xs text-rose-300">
-                Catalog unavailable: {productError.detail}
+                ))}
               </div>
+            )}
+          </div>
+        </GlassCard>
+
+        <GlassCard className="flex flex-col p-4 sm:p-6">
+          <CardHeader
+            icon={ShoppingCart}
+            eyebrow="Live transaction"
+            title="Checkout saga"
+            description="Order → inventory reserve → payment charge → inventory commit."
+          />
+
+          <div className="mt-4">
+            {productError ? (
+              <ErrorBanner title="Catalog unavailable" detail={productError.detail} />
             ) : product ? (
-              <div className="mt-4 p-3 bg-slate-900/60 rounded-lg border border-slate-700/50 space-y-1.5 text-xs">
-                <div className="flex justify-between text-slate-300">
-                  <span className="font-mono">{product.sku}</span>
-                  <span>${(Number(product.price_cents) / 100).toFixed(2)}</span>
+              <div className="glass-inset rounded-2xl p-3.5">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-mono text-[11px] font-semibold text-white/78">{product.sku}</span>
+                  <span className="text-sm font-semibold text-white">${(Number(product.price_cents) / 100).toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between text-slate-400">
-                  <span>{product.name}</span>
-                  <span>Qty 1</span>
+                <div className="mt-1.5 flex items-center justify-between gap-3 text-[11px]">
+                  <span className="min-w-0 truncate text-white/54">{product.name}</span>
+                  <span className="shrink-0 text-white/40">Qty 1</span>
                 </div>
               </div>
             ) : (
-              <div className="mt-4 p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-400">
+              <div className="glass-inset rounded-2xl p-3.5 text-xs text-white/46">
                 {loading ? 'Loading catalog...' : 'No product available.'}
               </div>
             )}
 
             {checkoutResult && (
-              <div className={`mt-4 p-3 rounded-lg border text-xs ${
-                checkoutResult.success 
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' 
-                  : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
-              }`}>
+              <div className={cn(
+                'mt-3 rounded-2xl border p-3.5 text-xs',
+                checkoutResult.success
+                  ? 'border-emerald-400/20 bg-emerald-400/[0.07] text-emerald-200'
+                  : 'border-rose-400/20 bg-rose-400/[0.07] text-rose-200'
+              )}>
                 {checkoutResult.success ? (
-                  <div>
-                    <span className="font-semibold block">Order {checkoutResult.data.status}</span>
-                    <span className="font-mono text-[11px] block mt-1">ID: {checkoutResult.data.orderId}</span>
-                    <span className="font-mono text-[11px] block">Payment: {checkoutResult.data.paymentId}</span>
+                  <div className="space-y-1">
+                    <span className="block font-semibold">Order {checkoutResult.data.status}</span>
+                    <span className="block break-all font-mono text-[10px] text-emerald-200/65">ID: {checkoutResult.data.orderId}</span>
+                    <span className="block break-all font-mono text-[10px] text-emerald-200/65">Payment: {checkoutResult.data.paymentId}</span>
                   </div>
                 ) : (
                   <div>
-                    <span className="font-semibold block">
+                    <span className="block font-semibold">
                       Checkout failed {checkoutResult.error.status ? `(HTTP ${checkoutResult.error.status})` : ''}
                     </span>
-                    <span className="block mt-1">{checkoutResult.error.detail}</span>
+                    <span className="mt-1 block leading-relaxed text-rose-200/72">{checkoutResult.error.detail}</span>
                     <button
+                      type="button"
                       onClick={() => navigate('/incidents')}
-                      className="mt-2 text-indigo-400 underline font-medium block"
+                      className="mt-2 inline-flex items-center gap-1 font-semibold text-signal-300 underline decoration-signal-400/30 underline-offset-2"
                     >
-                      View recorded incidents &rarr;
+                      View recorded incidents <ArrowRight className="h-3 w-3" />
                     </button>
                   </div>
                 )}
@@ -323,15 +387,21 @@ export default function Overview() {
             )}
           </div>
 
-          <button
+          <Button
             onClick={handleQuickCheckout}
             disabled={checkoutLoading || !product}
-            className="w-full mt-6 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg font-medium text-xs shadow-md transition"
+            loading={checkoutLoading}
+            variant="primary"
+            className="mt-5 w-full"
           >
-            {checkoutLoading ? 'Executing checkout saga...' : 'Trigger Checkout Saga'}
-          </button>
-        </div>
+            {checkoutLoading ? 'Executing saga' : 'Trigger checkout saga'}
+          </Button>
+        </GlassCard>
       </div>
+
+      {loading && !health && !incidents && !analysis && (
+        <LoadingBlock label="Contacting the local observability stack..." />
+      )}
     </div>
   );
 }

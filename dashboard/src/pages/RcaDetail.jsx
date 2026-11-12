@@ -1,22 +1,38 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft,
-  CheckCircle2,
-  AlertTriangle,
-  Clock,
-  GitCommit,
-  Cpu,
   Activity,
-  Sparkles,
+  AlertTriangle,
+  ArrowDown,
+  ArrowLeft,
   ArrowRight,
+  CheckCircle2,
+  Clock,
   Code,
+  Cpu,
+  GitCommit,
+  Layers,
   RefreshCw,
-  Layers
+  Sparkles
 } from 'lucide-react';
 import api from '../lib/api.js';
 import { describeApiError, normalizeIncident, normalizeIncidentList } from '../lib/contracts.js';
 import { traceDetailPath } from '../lib/routes.js';
+import {
+  Badge,
+  Button,
+  CardHeader,
+  EmptyState,
+  ErrorBanner,
+  GlassCard,
+  IconButton,
+  MetaChip,
+  Notice,
+  PageHeader,
+  ProgressRing,
+  StatusBadge,
+  cn
+} from '../components/ui.jsx';
 
 export default function RcaDetail() {
   const { incidentId } = useParams();
@@ -57,6 +73,7 @@ export default function RcaDetail() {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incidentId]);
 
   const data = incident;
@@ -65,298 +82,292 @@ export default function RcaDetail() {
   const remediations = data?.remediations || [];
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => navigate('/incidents')}
-            className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 transition"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-          <div>
-            <h2 className="text-2xl font-bold text-slate-100 tracking-tight flex items-center gap-2">
-              <span>Root Cause Analysis</span>
-              {data && <span className="font-mono text-base font-normal text-slate-400">({data.incidentId})</span>}
-            </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Recorded incident detail from real Tempo spans and Prometheus correlation.
-            </p>
-          </div>
-        </div>
+    <div className="space-y-5 lg:space-y-6">
+      <button
+        type="button"
+        onClick={() => navigate('/incidents')}
+        className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-white/50 transition hover:text-white/78"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" />
+        Back to incidents
+      </button>
 
-        <div className="flex items-center gap-3">
-          <button
-            onClick={load}
-            disabled={loading}
-            className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 transition"
-            title="Reload incident"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-          {data && (
-            <button
-              onClick={() => setShowJson(!showJson)}
-              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium border border-slate-700 flex items-center gap-1.5 transition"
-            >
-              <Code className="w-3.5 h-3.5" />
-              {showJson ? 'Hide Raw JSON' : 'View Raw JSON'}
-            </button>
-          )}
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Root cause analysis"
+        title={
+          <span className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
+            <span>Incident evidence</span>
+            {data && <span className="break-all font-mono text-[11px] font-normal tracking-normal text-white/44 sm:text-sm">{data.incidentId}</span>}
+          </span>
+        }
+        description="Recorded incident detail from real Tempo spans and Prometheus correlation."
+        actions={
+          <>
+            <IconButton label="Reload incident" onClick={load} disabled={loading}>
+              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+            </IconButton>
+            {data && (
+              <Button variant="secondary" onClick={() => setShowJson(!showJson)}>
+                <Code className="h-4 w-4" />
+                {showJson ? 'Hide raw JSON' : 'View raw JSON'}
+              </Button>
+            )}
+          </>
+        }
+        meta={data ? (
+          <>
+            <StatusBadge status={data.severity} />
+            <StatusBadge status={data.status} />
+            <MetaChip>{data.rootCauseType}</MetaChip>
+            {data.createdAt && <MetaChip icon={Clock}>{new Date(data.createdAt).toLocaleString()}</MetaChip>}
+          </>
+        ) : null}
+      />
 
       {loading && !data && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-12 text-center text-slate-400 animate-pulse">
-          Loading incident record...
-        </div>
+        <GlassCard className="flex min-h-48 items-center justify-center p-8">
+          <div className="flex items-center gap-2.5 text-xs text-white/50">
+            <span className="live-dot is-signal" />
+            Loading incident record...
+          </div>
+        </GlassCard>
       )}
 
       {error && (
-        <div className="p-4 bg-rose-950/30 border border-rose-800 rounded-xl text-xs text-rose-300 flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-          <div>
-            <div className="font-semibold">Incident unavailable ({error.code || 'ERROR'})</div>
-            <div className="mt-1">{error.detail}</div>
-          </div>
-        </div>
+        <ErrorBanner
+          title="Incident unavailable"
+          detail={error.detail}
+          code={error.code || 'ERROR'}
+        />
       )}
 
       {!loading && !error && !data && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-12 text-center text-slate-400">
-          <Layers className="w-8 h-8 text-slate-500 mx-auto mb-2" />
-          <p className="text-base font-medium text-slate-300">No incident records exist</p>
-          <p className="text-xs text-slate-500 mt-1">
-            Analyze a real Tempo trace to produce the first root cause incident.
-          </p>
-          <button
-            onClick={() => navigate('/traces')}
-            className="mt-4 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5"
-          >
-            Browse Traces <ArrowRight className="w-3.5 h-3.5" />
-          </button>
-        </div>
+        <EmptyState
+          icon={Layers}
+          title="No incident records exist"
+          description="Analyze a real Tempo trace to produce the first root cause incident."
+          action={
+            <Button variant="primary" onClick={() => navigate('/traces')}>
+              Browse traces <ArrowRight className="h-4 w-4" />
+            </Button>
+          }
+          className="py-16"
+        />
       )}
 
       {data && (
         <>
-          <div className="bg-gradient-to-r from-red-950/40 via-slate-900 to-slate-900 border border-red-800/60 rounded-xl p-6 shadow-lg">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2.5 flex-wrap">
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-900/60 border border-red-700 text-red-200">
-                    {data.severity} ROOT CAUSE
-                  </span>
-                  {data.analyzedAt && (
-                    <span className="text-xs text-slate-400 flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      {new Date(data.analyzedAt).toLocaleString()}
-                    </span>
-                  )}
+          <GlassCard className="relative overflow-hidden p-4 sm:p-6">
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_150%_at_0%_0%,rgba(255,45,85,0.17),transparent_56%)]" />
+            <div className="relative flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
+              <div className="min-w-0 space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone="rose" dot>{data.severity} root cause</Badge>
                   {data.traceId && (
                     <button
+                      type="button"
                       onClick={() => navigate(traceDetailPath(data.traceId))}
-                      className="text-xs font-mono text-indigo-400 hover:text-indigo-300 underline"
+                      className="inline-flex max-w-full items-center gap-1.5 break-all text-left font-mono text-[10px] text-white/50 underline decoration-white/15 underline-offset-2 transition hover:text-signal-300"
                     >
                       trace {data.traceId}
                     </button>
                   )}
                 </div>
-                <h3 className="text-xl font-bold text-slate-100 flex items-center gap-2 flex-wrap">
-                  Culprit Service: <span className="font-mono text-rose-400">{data.culpritService}</span>
-                </h3>
-                <p className="text-sm text-slate-300 max-w-2xl">{data.summary}</p>
-                <p className="text-xs text-slate-400 font-mono">Root cause type: {data.rootCauseType}</p>
+
+                <div>
+                  <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-white/40">Culprit service</p>
+                  <h2 className="mt-1 break-all font-mono text-2xl font-semibold tracking-[-0.03em] text-signal-300 sm:text-3xl">
+                    {data.culpritService}
+                  </h2>
+                </div>
+
+                <p className="max-w-2xl text-[13px] leading-relaxed text-white/66">{data.summary}</p>
+                <p className="break-all font-mono text-[10px] text-white/40">Root cause type: {data.rootCauseType}</p>
               </div>
 
-              <div className="flex items-center gap-6 bg-slate-950/60 border border-slate-800 p-4 rounded-xl">
+              <div className="flex shrink-0 items-center gap-4 self-start rounded-3xl border border-white/[0.07] bg-black/25 p-3.5 sm:gap-6 sm:p-4 xl:self-auto">
+                <ProgressRing
+                  ratio={data.confidenceScore ?? 0}
+                  display={data.confidenceScore === null ? '—' : `${(data.confidenceScore * 100).toFixed(0)}%`}
+                  caption="confidence"
+                  tone={data.confidenceScore !== null && data.confidenceScore >= 0.7 ? 'emerald' : 'amber'}
+                  size={88}
+                  stroke={7}
+                />
+                <div className="h-12 w-px bg-white/[0.08]" />
                 <div className="text-center">
-                  <div className="text-2xl font-bold text-emerald-400">
-                    {data.confidenceScore === null ? '—' : `${(data.confidenceScore * 100).toFixed(0)}%`}
-                  </div>
-                  <div className="text-xs text-slate-400 font-medium mt-0.5">Confidence</div>
-                </div>
-                <div className="w-px h-10 bg-slate-800"></div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-indigo-400">{evidence.length}</div>
-                  <div className="text-xs text-slate-400 font-medium mt-0.5">Evidence Signals</div>
+                  <p className="text-2xl font-semibold leading-none tracking-[-0.04em] text-white">{evidence.length}</p>
+                  <p className="mt-1.5 text-[8px] font-semibold uppercase tracking-[0.16em] text-white/42">Evidence signals</p>
                 </div>
               </div>
             </div>
-          </div>
+          </GlassCard>
 
           {!data.metricsAvailable && (
-            <div className="p-4 bg-amber-950/30 border border-amber-800 rounded-xl text-xs text-amber-300 flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-              <div>
-                <div className="font-semibold">Prometheus correlation unavailable</div>
-                <div className="mt-1">
-                  {data.metricsError?.message || data.metricsError?.code || 'Metrics were not available during analysis.'}{' '}
-                  Confidence is based on trace evidence only.
-                </div>
-              </div>
-            </div>
+            <Notice tone="warning">
+              <p className="font-semibold">Prometheus correlation unavailable</p>
+              <p className="mt-1 text-[11px] opacity-75">
+                {data.metricsError?.message || data.metricsError?.code || 'Metrics were not available during analysis.'}{' '}
+                Confidence is based on trace evidence only.
+              </p>
+            </Notice>
           )}
 
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-            <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wider mb-4 flex items-center gap-2">
-              <GitCommit className="w-4 h-4 text-indigo-400" />
-              Causal Propagation Path
-            </h3>
+          <GlassCard className="p-4 sm:p-6">
+            <CardHeader
+              icon={GitCommit}
+              eyebrow="Propagation"
+              title="Causal path"
+              description="Service hops recorded by the analysis engine for this incident."
+              action={<Badge tone="signal">{causalPath.length} hops</Badge>}
+            />
             {causalPath.length === 0 ? (
-              <div className="p-4 bg-slate-950 rounded-xl border border-slate-800/80 text-xs text-slate-400">
+              <div className="glass-inset mt-4 rounded-2xl p-4 text-xs text-white/46">
                 The analysis engine recorded no causal path for this incident.
               </div>
             ) : (
-              <div className="flex flex-col md:flex-row items-center justify-between gap-3 p-4 bg-slate-950 rounded-xl border border-slate-800/80">
+              <div className="mt-4 flex flex-col gap-2 md:flex-row md:items-stretch">
                 {causalPath.map((step, index) => {
                   const isCulprit = step.service === data.culpritService;
                   return (
                     <React.Fragment key={`${step.service}-${index}`}>
                       <div
-                        className={`flex-1 w-full p-4 rounded-lg border text-center transition ${
+                        className={cn(
+                          'min-w-0 flex-1 rounded-2xl border p-3.5 transition',
                           isCulprit
-                            ? 'bg-red-950/30 border-red-700/80 text-rose-200 shadow-md'
-                            : 'bg-slate-900/60 border-slate-800 text-slate-300'
-                        }`}
+                            ? 'border-signal-400/30 bg-signal-500/[0.09] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]'
+                            : 'border-white/[0.065] bg-white/[0.028]'
+                        )}
                       >
-                        <div className="text-xs text-slate-400 mb-1 font-mono">Hop {index + 1}</div>
-                        <div className="font-mono font-semibold text-sm">{step.service}</div>
-                        <div className="flex items-center justify-center gap-2 mt-2 text-xs">
-                          <span className="font-mono text-slate-400">{step.latency}</span>
-                          <span
-                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                              isCulprit
-                                ? 'bg-rose-900/80 text-rose-200'
-                                : 'bg-amber-900/60 text-amber-200'
-                            }`}
-                          >
-                            {step.status}
-                          </span>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[8px] font-semibold uppercase tracking-[0.16em] text-white/40">Hop {index + 1}</span>
+                          <StatusBadge status={step.status} />
                         </div>
+                        <p className={cn('mt-2 break-all font-mono text-[13px] font-semibold', isCulprit ? 'text-signal-200' : 'text-white/78')}>
+                          {step.service}
+                        </p>
+                        <p className="mt-1 font-mono text-[10px] text-white/44">{step.latency}</p>
                       </div>
                       {index < causalPath.length - 1 && (
-                        <ArrowRight className="w-5 h-5 text-slate-600 hidden md:block shrink-0" />
+                        <div className="flex shrink-0 items-center justify-center md:w-6">
+                          <ArrowDown className="h-4 w-4 text-white/30 md:hidden" />
+                          <ArrowRight className="hidden h-4 w-4 text-white/30 md:block" />
+                        </div>
                       )}
                     </React.Fragment>
                   );
                 })}
               </div>
             )}
-          </div>
+          </GlassCard>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-              <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wider mb-4 flex items-center gap-2">
-                <Activity className="w-4 h-4 text-indigo-400" />
-                Causal Evidence Chain
-              </h3>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-5">
+            <GlassCard className="p-4 sm:p-6">
+              <CardHeader
+                icon={Activity}
+                eyebrow="Signals"
+                title="Causal evidence chain"
+                action={<Badge tone={evidence.length ? 'emerald' : 'neutral'}>{evidence.length} signals</Badge>}
+              />
               {evidence.length === 0 ? (
-                <div className="p-4 bg-slate-950/70 border border-slate-800 rounded-lg text-xs text-slate-400">
+                <div className="glass-inset mt-4 rounded-2xl p-4 text-xs text-white/46">
                   No evidence signals were recorded.
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="mt-4 space-y-2">
                   {evidence.map((item, index) => (
                     <div
                       key={`${item.type}-${index}`}
-                      className="p-3.5 bg-slate-950/70 border border-slate-800 rounded-lg flex items-start gap-3"
+                      className="flex items-start gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.025] p-3.5"
                     >
-                      <div className="mt-0.5">
+                      <span className="mt-0.5 shrink-0">
                         {item.severity === 'CRITICAL' ? (
-                          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                          <AlertTriangle className="h-4 w-4 text-rose-400" />
                         ) : item.severity === 'HIGH' ? (
-                          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                          <AlertTriangle className="h-4 w-4 text-amber-400" />
                         ) : (
-                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <CheckCircle2 className="h-4 w-4 text-emerald-400" />
                         )}
-                      </div>
-                      <div className="flex-1 space-y-1">
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="font-mono text-xs font-semibold text-slate-300">{item.type}</span>
+                      </span>
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="break-all font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-white/70">{item.type}</span>
                           {item.value !== undefined && item.value !== null && (
-                            <span className="font-mono text-xs text-indigo-400 font-medium">{String(item.value)}</span>
+                            <span className="break-all font-mono text-[10px] font-medium text-signal-300">{String(item.value)}</span>
                           )}
                         </div>
-                        <p className="text-xs text-slate-400 leading-relaxed">{item.description}</p>
+                        <p className="break-words text-[11px] leading-relaxed text-white/50">{item.description}</p>
                       </div>
                     </div>
                   ))}
                 </div>
               )}
-            </div>
+            </GlassCard>
 
-            <div className="space-y-6">
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wider mb-4 flex items-center gap-2">
-                  <Cpu className="w-4 h-4 text-indigo-400" />
-                  Sweep-Line Interval Union
-                </h3>
+            <div className="space-y-4 lg:space-y-5">
+              <GlassCard className="p-4 sm:p-6">
+                <CardHeader icon={Cpu} eyebrow="Timing" title="Sweep-line interval union" />
                 {data.sweepLineMetrics ? (
-                  <div className="space-y-3 bg-slate-950 p-4 rounded-lg border border-slate-800 text-xs font-mono">
-                    <div className="flex justify-between py-1 border-b border-slate-800">
-                      <span className="text-slate-400">Total Span Duration:</span>
-                      <span className="text-slate-200 font-semibold">
-                        {data.sweepLineMetrics.totalSpanDurationMs} ms
-                      </span>
+                  <dl className="mt-4 space-y-1 rounded-2xl border border-white/[0.06] bg-black/20 p-3.5 font-mono text-[11px]">
+                    <div className="flex items-center justify-between gap-3 border-b border-white/[0.06] py-1.5">
+                      <dt className="text-white/46">Total span duration</dt>
+                      <dd className="text-white/78">{data.sweepLineMetrics.totalSpanDurationMs} ms</dd>
                     </div>
-                    <div className="flex justify-between py-1 border-b border-slate-800">
-                      <span className="text-slate-400">Child Spans Overlap:</span>
-                      <span className="text-slate-200 font-semibold">
-                        {data.sweepLineMetrics.childSpansOverlapMs} ms
-                      </span>
+                    <div className="flex items-center justify-between gap-3 border-b border-white/[0.06] py-1.5">
+                      <dt className="text-white/46">Child spans overlap</dt>
+                      <dd className="text-white/78">{data.sweepLineMetrics.childSpansOverlapMs} ms</dd>
                     </div>
-                    <div className="flex justify-between py-1 border-b border-slate-800">
-                      <span className="text-slate-400">Net Exclusive Self-Time:</span>
-                      <span className="text-rose-400 font-bold">{data.sweepLineMetrics.netSelfTimeMs} ms</span>
+                    <div className="flex items-center justify-between gap-3 border-b border-white/[0.06] py-1.5">
+                      <dt className="text-white/46">Net exclusive self-time</dt>
+                      <dd className="font-semibold text-signal-300">{data.sweepLineMetrics.netSelfTimeMs} ms</dd>
                     </div>
-                    <div className="flex justify-between py-1 text-slate-500 text-[11px]">
-                      <span>Engine Implementation:</span>
-                      <span className="text-indigo-400">{data.sweepLineMetrics.engineUsed}</span>
+                    <div className="flex items-center justify-between gap-3 py-1.5 text-[10px]">
+                      <dt className="text-white/36">Engine implementation</dt>
+                      <dd className="text-signal-300/75">{data.sweepLineMetrics.engineUsed}</dd>
                     </div>
-                  </div>
+                  </dl>
                 ) : (
-                  <div className="p-4 bg-slate-950/70 border border-slate-800 rounded-lg text-xs text-slate-400">
+                  <div className="glass-inset mt-4 rounded-2xl p-4 text-xs text-white/46">
                     No sweep-line metrics were recorded for this incident.
                   </div>
                 )}
-              </div>
+              </GlassCard>
 
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wider mb-4 flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-amber-400" />
-                  Automated Remediation Actions
-                </h3>
+              <GlassCard className="p-4 sm:p-6">
+                <CardHeader icon={Sparkles} eyebrow="Recommended" title="Automated remediation actions" />
                 {remediations.length === 0 ? (
-                  <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-lg text-xs text-slate-400">
+                  <div className="glass-inset mt-4 rounded-2xl p-4 text-xs text-white/46">
                     No remediation recommendation was recorded.
                   </div>
                 ) : (
-                  <ul className="space-y-2 text-xs text-slate-300">
+                  <ul className="mt-4 space-y-2">
                     {remediations.map((action, index) => (
                       <li
                         key={`${action}-${index}`}
-                        className="flex items-start gap-2.5 p-2 bg-slate-950/60 rounded-lg border border-slate-800"
+                        className="flex items-start gap-2.5 rounded-2xl border border-white/[0.06] bg-white/[0.025] p-3 text-[11px] leading-relaxed text-white/62"
                       >
-                        <span className="w-5 h-5 rounded-full bg-indigo-950 border border-indigo-700 text-indigo-300 flex items-center justify-center shrink-0 font-bold text-[10px]">
+                        <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-signal-400/25 bg-signal-500/10 text-[9px] font-bold text-signal-300">
                           {index + 1}
                         </span>
-                        <span className="mt-0.5 leading-relaxed">{action}</span>
+                        <span className="mt-0.5 break-words">{action}</span>
                       </li>
                     ))}
                   </ul>
                 )}
-              </div>
+              </GlassCard>
             </div>
           </div>
 
           {showJson && (
-            <div className="bg-slate-950 border border-slate-800 rounded-xl p-5 overflow-x-auto">
-              <div className="text-xs font-semibold text-slate-400 mb-2">Recorded Incident JSON:</div>
-              <pre className="text-xs font-mono text-emerald-400 leading-relaxed">
+            <GlassCard className="p-4 sm:p-5">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/42">Recorded incident JSON</p>
+                <Badge tone="neutral">raw payload</Badge>
+              </div>
+              <pre className="mt-3 max-h-[480px] overflow-auto rounded-2xl border border-white/[0.06] bg-black/30 p-4 font-mono text-[10px] leading-relaxed text-emerald-300/80">
                 {JSON.stringify(data, null, 2)}
               </pre>
-            </div>
+            </GlassCard>
           )}
         </>
       )}

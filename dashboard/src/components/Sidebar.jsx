@@ -1,73 +1,122 @@
 import React from 'react';
-import { NavLink } from 'react-router-dom';
-import { 
-  Activity, 
-  Server, 
-  GitFork, 
-  Layers, 
-  AlertTriangle, 
-  BarChart3, 
-  Zap, 
+import { NavLink, useLocation } from 'react-router-dom';
+import {
+  Activity,
+  Server,
+  GitFork,
+  Layers,
+  AlertTriangle,
+  BarChart3,
+  Zap,
   Settings,
   ShieldCheck
 } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext.jsx';
+import { BrandLockup, cn } from './ui.jsx';
 
-const navItems = [
-  { path: '/', label: 'Overview', icon: Activity },
-  { path: '/services', label: 'Services', icon: Server },
-  { path: '/graph', label: 'Dependency Graph', icon: GitFork },
-  { path: '/traces', label: 'Traces', icon: Layers },
-  { path: '/incidents', label: 'Incidents', icon: AlertTriangle },
-  { path: '/metrics', label: 'Metrics', icon: BarChart3 },
-  { path: '/fault-injection', label: 'Fault Injection', icon: Zap },
-  { path: '/settings', label: 'Settings', icon: Settings },
+const navGroups = [
+  {
+    label: 'Observe',
+    items: [
+      { path: '/', label: 'Overview', icon: Activity },
+      { path: '/services', label: 'Services', icon: Server },
+      { path: '/graph', label: 'Dependency Graph', icon: GitFork },
+      { path: '/traces', label: 'Traces', icon: Layers },
+      { path: '/incidents', label: 'Incidents', icon: AlertTriangle },
+      { path: '/metrics', label: 'Metrics', icon: BarChart3 }
+    ]
+  },
+  {
+    label: 'Control',
+    items: [
+      { path: '/fault-injection', label: 'Fault Injection', icon: Zap },
+      { path: '/settings', label: 'Settings', icon: Settings }
+    ]
+  }
 ];
+
+function isItemActive(pathname, path) {
+  if (path === '/') return pathname === '/';
+  if (path === '/incidents') {
+    return pathname === '/incidents' || pathname.startsWith('/incidents/') || pathname.startsWith('/rca');
+  }
+  if (path === '/traces') {
+    return pathname === '/traces' || pathname.startsWith('/traces/');
+  }
+  return pathname === path || pathname.startsWith(`${path}/`);
+}
 
 export default function Sidebar() {
   const { session } = useAuth();
+  const { pathname } = useLocation();
+  const roleLabel = session?.role ? session.role.replace('ROLE_', '') : 'VIEWER';
+  const initial = (session?.username || '?').slice(0, 1).toUpperCase();
 
   return (
-    <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col h-screen select-none">
-      <div className="h-16 flex items-center px-6 gap-3 border-b border-slate-800">
-        <div className="p-2 bg-indigo-500/10 border border-indigo-500/30 rounded-lg text-indigo-400">
-          <ShieldCheck className="w-6 h-6 text-indigo-400" />
+    <aside className="relative z-20 hidden w-[272px] shrink-0 p-3 lg:block xl:w-[292px] xl:p-4">
+      <div className="glass-panel-strong flex h-full flex-col overflow-hidden rounded-[28px]">
+        <div className="flex items-center px-5 pb-4 pt-5">
+          <BrandLockup subtitleClassName="lg:text-[8px] lg:tracking-[0.1em] xl:text-[9px] xl:tracking-[0.18em]" />
         </div>
-        <div>
-          <h1 className="font-bold text-slate-100 text-lg tracking-wide leading-tight">CausalOTel</h1>
-          <p className="text-xs text-indigo-400 font-medium">Root Cause Observability</p>
-        </div>
-      </div>
 
-      <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          return (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              end={item.path === '/'}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  isActive
-                    ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-                }`
-              }
-            >
-              <Icon className="w-4 h-4" />
-              <span>{item.label}</span>
-            </NavLink>
-          );
-        })}
-      </nav>
+        <nav className="flex-1 overflow-y-auto px-3 pb-4" aria-label="Primary navigation">
+          {navGroups.map((group) => (
+            <div key={group.label} className="mb-5 last:mb-0">
+              <p className="px-3 pb-2 text-[9px] font-semibold uppercase tracking-[0.22em] text-white/32">
+                {group.label}
+              </p>
+              <div className="space-y-1">
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  const active = isItemActive(pathname, item.path);
+                  return (
+                    <NavLink
+                      key={item.path}
+                      to={item.path}
+                      end={item.path === '/'}
+                      aria-current={active ? 'page' : undefined}
+                      className={cn(
+                        'group relative flex min-h-10 items-center gap-3 rounded-xl px-3 text-[12px] font-medium transition duration-200',
+                        active
+                          ? 'border border-signal-400/18 bg-gradient-to-r from-signal-500/[0.16] to-white/[0.025] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]'
+                          : 'border border-transparent text-white/54 hover:bg-white/[0.045] hover:text-white/84'
+                      )}
+                    >
+                      {active && (
+                        <span className="absolute left-0 top-1/2 h-5 w-[2px] -translate-y-1/2 rounded-full bg-signal-400 shadow-[0_0_12px_rgba(255,45,85,0.85)]" />
+                      )}
+                      <Icon className={cn('h-4 w-4 shrink-0 transition', active ? 'text-signal-300' : 'text-white/44 group-hover:text-white/64')} />
+                      <span className="truncate">{item.label}</span>
+                      {active && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-signal-400 shadow-[0_0_10px_rgba(255,45,85,0.8)]" />}
+                    </NavLink>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </nav>
 
-      <div className="p-4 border-t border-slate-800">
-        <div className="flex items-center gap-2 px-2 py-1.5 bg-slate-800/40 rounded-lg border border-slate-700/50">
-          <span className="w-2.5 h-2.5 rounded-full bg-indigo-400"></span>
-          <span className="text-xs text-slate-300 font-mono truncate">
-            {session ? `${session.username} (${session.role.replace('ROLE_', '')})` : 'Signed out'}
-          </span>
+        <div className="px-4 pb-4 pt-2">
+          <div className="rounded-2xl border border-white/[0.07] bg-black/25 p-3.5">
+            <div className="flex items-center gap-2">
+              <span className="live-dot" />
+              <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/66">Local stack</span>
+            </div>
+            <p className="mt-1.5 text-[10px] leading-relaxed text-white/40">
+              Tempo traces · Prometheus signals · live probes
+            </p>
+          </div>
+
+          <div className="mt-3 flex items-center gap-2.5 rounded-2xl border border-white/[0.07] bg-white/[0.035] p-2.5">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/10 bg-gradient-to-br from-signal-500/25 to-white/[0.04] text-[12px] font-semibold text-white/90">
+              {initial}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[11px] font-semibold text-white/78">{session?.username || 'Signed out'}</p>
+              <p className="truncate text-[9px] font-medium uppercase tracking-[0.12em] text-white/40">{roleLabel}</p>
+            </div>
+            <ShieldCheck className="h-4 w-4 shrink-0 text-white/30" />
+          </div>
         </div>
       </div>
     </aside>

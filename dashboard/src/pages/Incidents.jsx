@@ -2,18 +2,30 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
-  Search,
   ArrowRight,
-  CheckCircle2,
   Clock,
-  Server,
+  Database,
   Filter,
   RefreshCw,
-  Database
+  Server
 } from 'lucide-react';
 import api from '../lib/api.js';
 import { rcaDetailPath } from '../lib/routes.js';
 import { describeApiError, normalizeIncidentList } from '../lib/contracts.js';
+import {
+  Badge,
+  Button,
+  Chip,
+  EmptyState,
+  ErrorBanner,
+  GlassCard,
+  LoadingBlock,
+  MetaChip,
+  PageHeader,
+  SearchField,
+  StatusBadge,
+  cn
+} from '../components/ui.jsx';
 
 export default function Incidents() {
   const navigate = useNavigate();
@@ -39,6 +51,7 @@ export default function Incidents() {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filteredIncidents = (incidents || []).filter((incident) => {
@@ -52,171 +65,148 @@ export default function Incidents() {
   });
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-100 tracking-tight">Causal Incidents</h2>
-          <p className="text-sm text-slate-400 mt-1">
-            Durable incident records produced by real trace analysis. No seeded or fabricated incidents.
-          </p>
-        </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 transition shadow-sm"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          {loading ? 'Refreshing...' : 'Refresh Incidents'}
-        </button>
-      </div>
+    <div className="space-y-5 lg:space-y-6">
+      <PageHeader
+        eyebrow="Incident ledger"
+        title="Causal incidents"
+        description="Durable incident records produced by real trace analysis. No seeded or fabricated incidents."
+        actions={
+          <Button onClick={load} loading={loading} variant="secondary">
+            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+            {loading ? 'Refreshing' : 'Refresh incidents'}
+          </Button>
+        }
+        meta={
+          <>
+            <MetaChip icon={Database}>{incidents ? `${incidents.length} recorded` : 'Store loading'}</MetaChip>
+            <MetaChip icon={AlertTriangle}>
+              {incidents ? `${incidents.filter(incident => incident.status === 'ACTIVE').length} active` : '— active'}
+            </MetaChip>
+          </>
+        }
+      />
 
       {error && (
-        <div className="p-4 bg-rose-950/30 border border-rose-800 rounded-xl text-xs text-rose-300 flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-          <div>
-            <div className="font-semibold">Incident store unavailable ({error.code || 'ERROR'})</div>
-            <div className="mt-1">{error.detail}</div>
-          </div>
-        </div>
+        <ErrorBanner
+          title="Incident store unavailable"
+          detail={error.detail}
+          code={error.code || 'ERROR'}
+        />
       )}
 
-      <div className="flex flex-col sm:flex-row gap-3 items-center justify-between bg-slate-900 border border-slate-800 p-4 rounded-xl">
-        <div className="relative w-full sm:w-96">
-          <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="Search incident ID, culprit service, or root cause..."
+      <GlassCard className="p-3.5 sm:p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <SearchField
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
-            className="w-full pl-9 pr-4 py-2 bg-slate-950 border border-slate-800 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+            placeholder="Search incident ID, culprit service, or root cause..."
+            className="w-full lg:max-w-md"
+            aria-label="Search incidents"
           />
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/40">
+              <Filter className="h-3.5 w-3.5" />
+              Status
+            </span>
+            {['ALL', 'ACTIVE', 'RESOLVED'].map((status) => (
+              <Chip key={status} active={statusFilter === status} onClick={() => setStatusFilter(status)}>
+                {status}
+              </Chip>
+            ))}
+          </div>
         </div>
-
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <Filter className="w-4 h-4 text-slate-400" />
-          <span className="text-xs text-slate-400 font-medium">Status:</span>
-          {['ALL', 'ACTIVE', 'RESOLVED'].map((status) => (
-            <button
-              key={status}
-              onClick={() => setStatusFilter(status)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                statusFilter === status
-                  ? 'bg-indigo-600 text-white shadow'
-                  : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              {status}
-            </button>
-          ))}
-        </div>
-      </div>
+      </GlassCard>
 
       <div className="space-y-3">
         {loading && incidents === null ? (
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-12 text-center text-slate-400 animate-pulse">
-            Loading incident records...
-          </div>
+          <LoadingBlock label="Loading incident records..." />
         ) : filteredIncidents.length === 0 ? (
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-12 text-center text-slate-400">
-            <Database className="w-8 h-8 text-slate-500 mx-auto mb-2" />
-            <p className="text-base font-medium text-slate-300">
-              {incidents?.length ? 'No incidents match the filters' : 'No incidents recorded'}
-            </p>
-            <p className="text-xs text-slate-500 mt-1">
-              {incidents?.length
-                ? 'Adjust the search term or status filter.'
-                : 'Incidents appear only after a real Tempo trace is analyzed from the Traces page.'}
-            </p>
-            {!incidents?.length && (
-              <button
-                onClick={() => navigate('/traces')}
-                className="mt-4 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5"
-              >
-                Browse Tempo Traces <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
+          <EmptyState
+            icon={Database}
+            title={incidents?.length ? 'No incidents match the filters' : 'No incidents recorded'}
+            description={incidents?.length
+              ? 'Adjust the search term or status filter.'
+              : 'Incidents appear only after a real Tempo trace is analyzed from the Traces page.'}
+            action={!incidents?.length ? (
+              <Button variant="primary" onClick={() => navigate('/traces')}>
+                Browse Tempo traces <ArrowRight className="h-4 w-4" />
+              </Button>
+            ) : null}
+            className="py-16"
+          />
         ) : (
-          filteredIncidents.map((incident) => (
-            <div
-              key={incident.incidentId}
-              className="bg-slate-900 border border-slate-800 hover:border-slate-700 transition rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm"
-            >
-              <div className="space-y-2 flex-1">
-                <div className="flex items-center gap-3 flex-wrap">
-                  <span className="font-mono text-sm font-semibold text-slate-200">{incident.incidentId}</span>
-                  <span
-                    className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                      incident.severity === 'CRITICAL'
-                        ? 'bg-red-950/60 border border-red-800 text-red-300'
-                        : incident.severity === 'HIGH'
-                          ? 'bg-amber-950/60 border border-amber-800 text-amber-300'
-                          : 'bg-indigo-950/60 border border-indigo-800 text-indigo-300'
-                    }`}
+          filteredIncidents.map((incident, index) => {
+            const severityTone = incident.severity === 'CRITICAL'
+              ? 'bg-rose-400'
+              : incident.severity === 'HIGH'
+                ? 'bg-amber-400'
+                : 'bg-signal-400';
+
+            return (
+              <GlassCard
+                key={incident.incidentId}
+                interactive
+                className={cn('relative overflow-hidden p-4 sm:p-5', index < 3 ? 'stagger-1' : 'stagger-2', 'animate-fade-up')}
+              >
+                <span className={cn('absolute bottom-5 left-0 top-5 w-[2px] rounded-full', severityTone)} />
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0 flex-1 space-y-2.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-[12px] font-semibold text-white/90">{incident.incidentId}</span>
+                      <StatusBadge status={incident.severity} />
+                      <StatusBadge status={incident.status} />
+                      {incident.createdAt && (
+                        <span className="inline-flex items-center gap-1 text-[10px] text-white/42">
+                          <Clock className="h-3 w-3" />
+                          {new Date(incident.createdAt).toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="max-w-4xl text-[13px] leading-relaxed text-white/70">{incident.summary}</p>
+
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[10px] text-white/46">
+                      <span className="inline-flex items-center gap-1.5">
+                        <Server className="h-3.5 w-3.5 text-white/40" />
+                        Culprit
+                        <span className="font-mono font-semibold text-signal-300">{incident.culpritService}</span>
+                      </span>
+                      <span className="text-white/20">·</span>
+                      <span className="font-mono">{incident.rootCauseType}</span>
+                      <span className="text-white/20">·</span>
+                      <span>
+                        Confidence
+                        <span className="ml-1 font-semibold text-emerald-300">
+                          {incident.confidenceScore === null
+                            ? 'not scored'
+                            : `${(incident.confidenceScore * 100).toFixed(0)}%`}
+                        </span>
+                      </span>
+                      {incident.traceId && (
+                        <>
+                          <span className="text-white/20">·</span>
+                          <span className="break-all font-mono text-white/40">Trace {incident.traceId}</span>
+                        </>
+                      )}
+                      {!incident.metricsAvailable && (
+                        <Badge tone="amber">Prometheus correlation unavailable</Badge>
+                      )}
+                    </div>
+                  </div>
+
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => navigate(rcaDetailPath(incident.incidentId))}
+                    className="w-full shrink-0 lg:w-auto"
                   >
-                    {incident.severity}
-                  </span>
-                  <span
-                    className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      incident.status === 'ACTIVE'
-                        ? 'bg-rose-950/80 border border-rose-800 text-rose-300'
-                        : 'bg-emerald-950/60 border border-emerald-800 text-emerald-300'
-                    }`}
-                  >
-                    {incident.status}
-                  </span>
-                  {incident.createdAt && (
-                    <span className="text-xs text-slate-500 flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5" />
-                      {new Date(incident.createdAt).toLocaleString()}
-                    </span>
-                  )}
+                    Inspect RCA
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </Button>
                 </div>
-
-                <p className="text-sm text-slate-300 font-medium">{incident.summary}</p>
-
-                <div className="flex items-center gap-4 text-xs text-slate-400 flex-wrap">
-                  <span className="flex items-center gap-1.5">
-                    <Server className="w-3.5 h-3.5 text-indigo-400" />
-                    Culprit: <span className="font-mono font-semibold text-rose-400">{incident.culpritService}</span>
-                  </span>
-                  <span>•</span>
-                  <span className="font-mono">{incident.rootCauseType}</span>
-                  <span>•</span>
-                  <span>
-                    Confidence:{' '}
-                    <span className="font-semibold text-emerald-400">
-                      {incident.confidenceScore === null
-                        ? 'not scored'
-                        : `${(incident.confidenceScore * 100).toFixed(0)}%`}
-                    </span>
-                  </span>
-                  {incident.traceId && (
-                    <>
-                      <span>•</span>
-                      <span className="font-mono text-slate-400">Trace: {incident.traceId}</span>
-                    </>
-                  )}
-                  {!incident.metricsAvailable && (
-                    <>
-                      <span>•</span>
-                      <span className="text-amber-400">Prometheus correlation unavailable</span>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => navigate(rcaDetailPath(incident.incidentId))}
-                  className="px-3.5 py-2 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition"
-                >
-                  Inspect RCA
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-          ))
+              </GlassCard>
+            );
+          })
         )}
       </div>
     </div>

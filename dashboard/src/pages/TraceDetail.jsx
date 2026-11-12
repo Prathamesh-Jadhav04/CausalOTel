@@ -1,9 +1,30 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Zap, AlertTriangle, RefreshCw, Layers } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Layers,
+  RefreshCw,
+  Zap
+} from 'lucide-react';
 import api from '../lib/api.js';
 import { describeApiError, normalizeTraceDetail } from '../lib/contracts.js';
 import { rcaDetailPath } from '../lib/routes.js';
+import {
+  Badge,
+  BottomSheet,
+  Button,
+  CardHeader,
+  EmptyState,
+  ErrorBanner,
+  GlassCard,
+  IconButton,
+  MetaChip,
+  PageHeader,
+  StatusBadge,
+  cn,
+  useMediaQuery
+} from '../components/ui.jsx';
 
 export default function TraceDetail() {
   const { traceId } = useParams();
@@ -14,6 +35,7 @@ export default function TraceDetail() {
   const [selectedSpan, setSelectedSpan] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState(null);
+  const compact = useMediaQuery('(max-width: 767px)');
 
   const load = async () => {
     setLoading(true);
@@ -33,6 +55,7 @@ export default function TraceDetail() {
     setSelectedSpan(null);
     setAnalysisError(null);
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [traceId]);
 
   const analyze = async () => {
@@ -52,162 +75,215 @@ export default function TraceDetail() {
     }
   };
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate('/traces')}
-            className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-          <div>
-            <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-              Trace: <span className="font-mono text-indigo-400">{traceId}</span>
-            </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Real Tempo spans with sweep-line interval-union self-time.
-            </p>
-          </div>
-        </div>
+  const errorSpans = trace?.spans?.filter(span => span.statusCode === 'ERROR').length || 0;
+  const services = trace?.spans ? new Set(trace.spans.map(span => span.service)).size : 0;
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={load}
-            disabled={loading}
-            className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 transition"
-            title="Reload trace"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-          <button
-            onClick={analyze}
-            disabled={analyzing || !trace}
-            className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg shadow-sm"
-          >
-            <Zap className="w-3.5 h-3.5" />
-            {analyzing ? 'Analyzing...' : 'Analyze Root Cause'}
-          </button>
+  const spanInspector = selectedSpan && (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge tone={selectedSpan.statusCode === 'ERROR' ? 'rose' : 'emerald'} dot>
+          {selectedSpan.statusCode}
+        </Badge>
+        <Badge>{selectedSpan.service}</Badge>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="glass-inset rounded-2xl p-3.5">
+          <p className="text-[8px] font-semibold uppercase tracking-[0.16em] text-white/40">Span ID</p>
+          <p className="mt-1 break-all font-mono text-[11px] text-white/78">{selectedSpan.spanId}</p>
+        </div>
+        <div className="glass-inset rounded-2xl p-3.5">
+          <p className="text-[8px] font-semibold uppercase tracking-[0.16em] text-white/40">Service</p>
+          <p className="mt-1 break-all font-mono text-[11px] text-white/78">{selectedSpan.service}</p>
+        </div>
+        <div className="glass-inset rounded-2xl p-3.5">
+          <p className="text-[8px] font-semibold uppercase tracking-[0.16em] text-white/40">Computed self-time</p>
+          <p className="mt-1 font-mono text-sm font-semibold text-signal-300">{selectedSpan.selfTimeMs}ms</p>
+        </div>
+        <div className="glass-inset rounded-2xl p-3.5">
+          <p className="text-[8px] font-semibold uppercase tracking-[0.16em] text-white/40">Duration</p>
+          <p className="mt-1 font-mono text-sm font-semibold text-white/78">{selectedSpan.durationMs}ms</p>
+        </div>
+        <div className="glass-inset col-span-2 rounded-2xl p-3.5">
+          <p className="text-[8px] font-semibold uppercase tracking-[0.16em] text-white/40">Status message</p>
+          <p className="mt-1 break-words font-mono text-[11px] leading-relaxed text-white/70">
+            {selectedSpan.statusMessage || selectedSpan.statusCode}
+          </p>
         </div>
       </div>
+      <p className="break-all font-mono text-[10px] text-white/34">
+        Timing engine: {selectedSpan.timingEngine || 'not reported'}
+      </p>
+    </div>
+  );
+
+  return (
+    <div className="space-y-5 lg:space-y-6">
+      <button
+        type="button"
+        onClick={() => navigate('/traces')}
+        className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-white/50 transition hover:text-white/78"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" />
+        Back to traces
+      </button>
+
+      <PageHeader
+        eyebrow="Trace detail"
+        title={
+          <span className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
+            <span>Waterfall</span>
+            <span className="break-all font-mono text-[11px] font-normal tracking-normal text-white/44 sm:text-sm">
+              {traceId}
+            </span>
+          </span>
+        }
+        description="Real Tempo spans with sweep-line interval-union self-time."
+        actions={
+          <>
+            <IconButton label="Reload trace" onClick={load} disabled={loading}>
+              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+            </IconButton>
+            <Button onClick={analyze} disabled={analyzing || !trace} loading={analyzing} variant="primary">
+              <Zap className="h-4 w-4" />
+              {analyzing ? 'Analyzing' : 'Analyze root cause'}
+            </Button>
+          </>
+        }
+        meta={trace ? (
+          <>
+            <MetaChip icon={Layers}>{trace.totalSpans} spans</MetaChip>
+            <MetaChip>{trace.totalDurationMs.toFixed(1)}ms total</MetaChip>
+            <MetaChip>{services} services</MetaChip>
+            <MetaChip>{errorSpans} errors</MetaChip>
+          </>
+        ) : null}
+      />
 
       {analysisError && (
-        <div className="p-4 bg-rose-950/30 border border-rose-800 rounded-xl text-xs text-rose-300 flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-          <div>
-            <div className="font-semibold">RCA failed ({analysisError.code || 'ERROR'})</div>
-            <div className="mt-1">{analysisError.detail}</div>
-          </div>
-        </div>
+        <ErrorBanner
+          title="RCA failed"
+          detail={analysisError.detail}
+          code={analysisError.code || 'ERROR'}
+        />
       )}
 
       {error && (
-        <div className="p-4 bg-rose-950/30 border border-rose-800 rounded-xl text-xs text-rose-300 flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-          <div>
-            <div className="font-semibold">Trace unavailable ({error.code || 'TEMPO_ERROR'})</div>
-            <div className="mt-1">{error.detail}</div>
-          </div>
-        </div>
+        <ErrorBanner
+          title="Trace unavailable"
+          detail={error.detail}
+          code={error.code || 'TEMPO_ERROR'}
+        />
       )}
 
       {loading && !trace && (
-        <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl p-12 text-center text-sm text-slate-400 animate-pulse">
-          Loading trace from Tempo...
-        </div>
+        <GlassCard className="flex min-h-48 items-center justify-center p-8">
+          <div className="flex items-center gap-2.5 text-xs text-white/50">
+            <span className="live-dot is-signal" />
+            Loading trace from Tempo...
+          </div>
+        </GlassCard>
       )}
 
       {trace && trace.spans.length === 0 && (
-        <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl p-12 text-center text-slate-400">
-          <Layers className="w-8 h-8 mx-auto mb-2 text-slate-500" />
-          <p className="text-base font-medium text-slate-300">Trace contains no spans</p>
-          <p className="text-xs text-slate-500 mt-1">The analysis engine refused to fabricate a waterfall.</p>
-        </div>
+        <EmptyState
+          icon={Layers}
+          title="Trace contains no spans"
+          description="The analysis engine refused to fabricate a waterfall."
+          className="py-16"
+        />
       )}
 
       {trace && trace.spans.length > 0 && (
         <>
-          <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl p-6 space-y-4">
-            <div className="flex items-center justify-between text-xs text-slate-400 border-b border-slate-700/60 pb-3">
-              <span className="font-semibold uppercase tracking-wider">Span & Operation</span>
-              <span className="font-mono">
-                {trace.totalSpans} spans · Total duration: {trace.totalDurationMs.toFixed(1)}ms
-              </span>
-            </div>
+          <GlassCard className="p-4 sm:p-6">
+            <CardHeader
+              icon={Layers}
+              eyebrow="Span timeline"
+              title="Span waterfall"
+              description={`${trace.totalSpans} spans · ${trace.totalDurationMs.toFixed(1)}ms total duration`}
+              action={<StatusBadge status={errorSpans > 0 ? 'ERROR' : 'OK'} label={errorSpans > 0 ? `${errorSpans} errors` : 'No span errors'} />}
+            />
 
-            <div className="space-y-3">
+            <div className="mt-4 space-y-2">
               {trace.spans.map((span) => {
                 const leftPercent = trace.totalDurationMs > 0
                   ? (span.startOffsetMs / trace.totalDurationMs) * 100
                   : 0;
                 const widthPercent = trace.totalDurationMs > 0
-                  ? Math.max(1, (span.durationMs / trace.totalDurationMs) * 100)
+                  ? Math.max(1.5, (span.durationMs / trace.totalDurationMs) * 100)
                   : 100;
                 const isError = span.statusCode === 'ERROR';
+                const isSelected = selectedSpan?.spanId === span.spanId;
 
                 return (
-                  <div
+                  <button
                     key={span.spanId}
+                    type="button"
                     onClick={() => setSelectedSpan(span)}
-                    className={`p-3 rounded-lg border cursor-pointer transition ${
-                      selectedSpan?.spanId === span.spanId
-                        ? 'bg-slate-750 border-indigo-500'
-                        : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
-                    }`}
+                    className={cn(
+                      'block w-full rounded-2xl border p-3 text-left transition duration-200',
+                      isSelected
+                        ? 'border-signal-400/35 bg-signal-500/[0.07]'
+                        : 'border-white/[0.065] bg-white/[0.025] hover:border-white/12 hover:bg-white/[0.045]'
+                    )}
                   >
-                    <div className="flex items-center justify-between text-xs mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full ${isError ? 'bg-rose-500' : 'bg-emerald-500'}`} />
-                        <span className="font-semibold text-slate-200">{span.name}</span>
-                        <span className="px-1.5 py-0.5 bg-slate-800 text-[10px] text-slate-400 rounded font-mono">
-                          {span.service}
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className={cn(
+                          'h-1.5 w-1.5 shrink-0 rounded-full',
+                          isError ? 'bg-rose-400 shadow-[0_0_10px_rgba(251,113,133,0.6)]' : 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.45)]'
+                        )} />
+                        <span className="min-w-0 truncate text-[12px] font-semibold text-white/84">{span.name}</span>
+                        <span className="hidden shrink-0 sm:inline-flex">
+                          <Badge>{span.service}</Badge>
                         </span>
                       </div>
-                      <div className="text-right text-xs font-mono text-slate-400 flex items-center gap-3">
-                        <span>Duration: <strong className="text-slate-200">{span.durationMs}ms</strong></span>
-                        <span>Self-Time: <strong className="text-indigo-400">{span.selfTimeMs}ms</strong></span>
+                      <div className="flex flex-wrap items-center gap-3 font-mono text-[10px] text-white/44">
+                        <span>duration <strong className="font-semibold text-white/70">{span.durationMs}ms</strong></span>
+                        <span>self <strong className="font-semibold text-signal-300">{span.selfTimeMs}ms</strong></span>
                       </div>
                     </div>
-
-                    <div className="w-full bg-slate-950 h-3 rounded-full relative overflow-hidden">
+                    <div className="relative mt-2.5 h-2 overflow-hidden rounded-full bg-black/35">
                       <div
                         style={{ left: `${leftPercent}%`, width: `${widthPercent}%` }}
-                        className={`absolute top-0 bottom-0 rounded-full ${isError ? 'bg-rose-500' : 'bg-indigo-500'}`}
+                        className={cn(
+                          'absolute inset-y-0 rounded-full transition-[width,left] duration-500',
+                          isError
+                            ? 'bg-gradient-to-r from-rose-500 to-red-600 shadow-[0_0_12px_rgba(244,63,94,0.45)]'
+                            : 'bg-gradient-to-r from-signal-400 to-signal-600 shadow-[0_0_12px_rgba(255,45,85,0.35)]'
+                        )}
                       />
                     </div>
-                  </div>
+                    <div className="mt-2 flex items-center justify-between gap-3 sm:hidden">
+                      <Badge>{span.service}</Badge>
+                      <span className="text-[10px] text-white/40">Tap for span inspector</span>
+                    </div>
+                  </button>
                 );
               })}
             </div>
-          </div>
+          </GlassCard>
 
-          {selectedSpan && (
-            <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl p-5 space-y-3">
-              <h3 className="text-sm font-semibold text-slate-200">Span Inspector</h3>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-                <div>
-                  <span className="text-slate-500 block">Span ID</span>
-                  <span className="font-mono text-slate-300">{selectedSpan.spanId}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">Service</span>
-                  <span className="font-mono text-slate-300">{selectedSpan.service}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">Computed Self-Time</span>
-                  <span className="font-mono text-indigo-400 font-bold">{selectedSpan.selfTimeMs}ms</span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">Status Message</span>
-                  <span className="font-mono text-slate-300">{selectedSpan.statusMessage || selectedSpan.statusCode}</span>
-                </div>
-              </div>
-              <div className="text-[11px] text-slate-500 font-mono">
-                Timing engine: {selectedSpan.timingEngine || 'not reported'}
-              </div>
-            </div>
+          {selectedSpan && !compact && (
+            <GlassCard className="p-5">
+              <CardHeader icon={Zap} eyebrow="Selected span" title="Span inspector" />
+              <div className="mt-4">{spanInspector}</div>
+            </GlassCard>
           )}
+
+          <BottomSheet
+            open={Boolean(selectedSpan) && compact}
+            onClose={() => setSelectedSpan(null)}
+            eyebrow="Selected span"
+            title="Span inspector"
+            footer={
+              <Button variant="secondary" className="w-full" onClick={() => setSelectedSpan(null)}>
+                Close inspector
+              </Button>
+            }
+          >
+            {spanInspector}
+          </BottomSheet>
         </>
       )}
     </div>
