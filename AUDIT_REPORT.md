@@ -1,9 +1,14 @@
 # AUDIT_REPORT — CausalOTel
 
-> **Audit-only document.** This report records the repository as found at commit
+> **Audit-only baseline.** Sections 1–9 record the repository as found at commit
 > `a10bf0ba238ccc038901f9c772c3958b956fa015` (branch `feature/complete-causalotel`) on 2026-11-11.
-> No source, test, schema, or runtime configuration was modified. No fixes were implemented.
-> The only files added by this audit are `ARCHITECTURE.md`, `PROJECT_CONTEXT.md`, and this report.
+> That audit was read-only: no source, test, schema, or runtime configuration was modified.
+>
+> **Remediation update (2026-11-13).** All findings were subsequently remediated on
+> `feature/complete-causalotel`. Section 10 records the final status of all 34 findings with
+> verification evidence. The baseline sections are preserved unchanged so the audit trail remains
+> honest; where they describe a defect, treat the defect as historical and consult Section 10 for
+> the current state.
 
 ## 1. Executive summary
 
@@ -1334,6 +1339,76 @@ or real inventory.
 
 **No fixes were implemented during this audit.** Source, tests, schemas, and runtime configuration
 are unchanged. The next step is an explicit `FIX` instruction selecting the scope to remediate.
+
+## 10. Remediation status (2026-11-13)
+
+All fixes were implemented on `feature/complete-causalotel` after the audit baseline. The status
+labels used here are:
+
+- **FIXED AND VERIFIED** — code changed, a regression test or live check proves the fix, and the
+  relevant build/test/integration command was run.
+- **FIXED BUT UNVERIFIED** — code changed but the proving check could not be run in this environment.
+- **PARTIALLY FIXED** — some attack path or failure mode remains.
+- **BLOCKED** — the environment lacks a required toolchain; the limitation is explicit in the product.
+
+### 10.1 Verification evidence
+
+| Check | Command | Result |
+|---|---|---|
+| Full build and all automated suites | `scripts\build-all.ps1` | PASS — user, product, order, payment, inventory, analysis (73 tests), dashboard tests (27 tests); dashboard production build; `cpp-core SKIP` (no CMake) |
+| Isolated master test run | `scripts\test-all.ps1` | PASS — 7/7 suites; live SQLite databases and `spool/incidents` fingerprinted `UNCHANGED` |
+| Real telemetry smoke test | `scripts\verify-observability.ps1` | PASS — OTLP span accepted, stored by Tempo, served by analysis-engine with `synthetic=false`; all 7 Prometheus targets `UP` |
+| Authenticated checkout/fault/recovery/RCA demo | `scripts\demo-checkout-rca.ps1` | PASS — 60/60 checks; real checkout trace `4bdd7f97948770cc004dbefe10a04bed` with `order-service`, `payment-service`, and `product-service` spans; incident `inc-4bdd7f979487` persisted |
+| Live graph | `GET /api/analysis/graph?window=15m&limit=20` | PASS — `source: tempo`; 20 real traces, 5 nodes, 2 edges (`order-service → payment-service` ×5, `order-service → product-service` ×3); `failedTraceCount=0`, `degraded=false`; maintenance roots excluded by `rootName` TraceQL and defensive filtering |
+| Payment simulation safety | payment suite | PASS — simulation disabled by default; 503 guards; profile-gated startup |
+| Native C++ core | `build-all.ps1` | **BLOCKED** — no CMake/compiler; JS fallback active and tested |
+
+### 10.2 Final status of all 34 findings
+
+| ID | Severity | Finding | Status | Verification |
+|---|---|---|---|---|
+| C-01 | Critical | Unauthenticated path traversal in incident spool write | **FIXED AND VERIFIED** | Strict incident-ID validation plus resolved-path containment; traversal/absolute/NUL/overlong IDs rejected; no out-of-spool writes (`spool.test.js`, `server.test.js`) |
+| C-02 | Critical | Client-supplied item prices drive order total and payment charge | **FIXED AND VERIFIED** | Order-service resolves authoritative catalog prices; client price is mismatch detection only; tampered/omitted/out-of-stock cases tested; demo asserts server-resolved total |
+| C-03 | Critical | Tempo failures silently fabricate synthetic traces | **FIXED AND VERIFIED** | Typed `TempoError` 400/404/502/503; synthetic fixture is opt-in, marked `synthetic:true`, never persisted or scored; demo asserts `synthetic=false` |
+| C-04 | Critical | Telemetry plane has configs but no deployment and is not running | **FIXED AND VERIFIED** | Pinned native Collector/Tempo/Prometheus installed and started by scripts; real OTLP→Tempo→analysis and Prometheus scrape verified |
+| H-01 | High | Unauthenticated runtime fault-injection endpoints | **FIXED AND VERIFIED** | Fault GET/POST require `ROLE_ADMIN`; bounded/audited and disableable; tests cover anonymous/user denial and disabled mode |
+| H-02 | High | No authentication or authorization on business APIs | **FIXED AND VERIFIED** | HMAC-signed bearer tokens with `ROLE_USER`/`ROLE_ADMIN`/`ROLE_SERVICE`; user/order scoping; auth tests across services; live demo authenticates every call |
+| H-03 | High | Checkout idempotency hash ignores item identity and price | **FIXED AND VERIFIED** | Canonical hash covers user, currency, resolved items/prices; key bound to user; different SKU returns 409 with no second order (tests) |
+| H-04 | High | Reservation idempotency check is a check-then-act race | **FIXED AND VERIFIED** | Unique `(OrderId, Sku)` index and transactional claim; concurrent reserve consumes stock once; mismatched payload rejected (`H04_*` tests) |
+| H-05 | High | Reservation state transitions permit duplicate/wrong reservations | **FIXED AND VERIFIED** | Explicit state machine with guarded transitions; invalid transitions rejected (`H05_*` tests) |
+| H-06 | High | Saga/outbox persistence errors are swallowed | **FIXED AND VERIFIED** | Order status, saga state, outbox task, and idempotency result commit in one transaction; persistence failure aborts checkout (test) |
+| H-07 | High | Stale-saga recovery races active checkout and outbox work | **FIXED AND VERIFIED** | 30s leases with atomic claims; recovery ignores active leases and claims expired sagas exactly once (tests) |
+| H-08 | High | Expiry worker holds a DB write transaction across HTTP calls | **FIXED AND VERIFIED** | Payment states resolved before the write transaction; per-order outcomes isolated (`H08_*` tests) |
+| H-09 | High | Downstream HTTP client has no connect/read timeouts | **FIXED AND VERIFIED** | Configurable connect/read timeouts on the shared client; timeout regression test |
+| H-10 | High | Metrics endpoint returns random and hardcoded data | **FIXED AND VERIFIED** | Analysis metrics query Prometheus deterministically; outage returns typed 503; live response `source: prometheus` with real service metrics |
+| H-11 | High | Incident persistence is broken and MongoDB is unused | **FIXED AND VERIFIED** | Durable disk spool is the source of truth; atomic writes, restart hydration, corrupt-file quarantine; demo persists and rereads an incident; `/health/ready` reports disk spool |
+| H-12 | High | Dashboard RCA/incident contract does not match the backend | **FIXED AND VERIFIED** | Normalizers and page wiring match real contracts; contract tests plus live persisted-incident read |
+| H-13 | High | Dashboard fault payloads do not match either backend | **FIXED AND VERIFIED** | Exact payment/inventory payloads sent; admin-only; contract tests; live fault demo returns expected 504 |
+| H-14 | High | Dashboard displays mock or static operational data | **FIXED AND VERIFIED** | Mock fallbacks removed from health, traces, metrics, incidents, topology, settings; pages show explicit errors when APIs fail; dashboard tests/build |
+| H-15 | High | Test suites mutate live databases and are not isolated | **FIXED AND VERIFIED** | `test-all.ps1` redirects `LOCALAPPDATA`, supplies temp DB paths, fingerprints live DBs and spool, and fails on change; 7/7 suites pass with live data `UNCHANGED` |
+| M-01 | Medium | Outbox retry backoff is ineffective | **FIXED AND VERIFIED** | Deterministic `min(60s, 2^retries + jitter)` gate; retry/dead-letter metrics; test asserts 2/4/8/16/32s, gating, `FAILED`, and metric deltas |
+| M-02 | Medium | In-flight lock maps are removed or used unsafely | **FIXED AND VERIFIED** | Fixed 256-entry striped lock array; DB constraints remain authoritative; 100-concurrent-charge test |
+| M-03 | Medium | Refund/compensation outbox path is dead code | **FIXED AND VERIFIED** | Five commit attempts then transactional escalation to exactly one `REFUND_PAYMENT`; final idempotent commit before refund; late commit confirms without refund (tests) |
+| M-04 | Medium | User IDs are UUID strings but read/checkout paths expect integers | **FIXED AND VERIFIED** | UUID `TEXT` end to end via Flyway V4; user/order read and checkout tests |
+| M-05 | Medium | Dependency graph endpoint is a static hardcoded topology | **FIXED AND VERIFIED** | Graph derived from recent Tempo parent/child spans with window/cache/health metadata; Tempo `rootName` TraceQL filter plus defensive client check excludes maintenance traces; bounded fetch concurrency; trace-list `service`/`operation` filters; live graph and tests |
+| M-06 | Medium | Checkout validation permits overflow and duplicate/unverified SKUs | **FIXED AND VERIFIED** | Item/quantity/total bounds, duplicate coalescing, unknown SKU rejection, catalog `productId` authority; item/quantity/total/duplicate/unknown/mismatch tests |
+| M-07 | Medium | Metrics page expects a different shape and silently keeps mock data | **FIXED AND VERIFIED** | Page consumes real `{source, generatedAt, window, services}` object; no mock retention; dashboard tests |
+| M-08 | Medium | Health/status surfaces are static or tied to unused Mongo | **FIXED AND VERIFIED** | Analysis engine performs server-side health probes; dashboard renders real UP/DOWN/UNREACHABLE; readiness uses the disk spool, not Mongo; tests and live probes |
+| M-09 | Medium | `start-all.ps1` launches stale artifacts and omits the tracer | **FIXED AND VERIFIED** | Rebuilds stale artifacts, checks ports/PIDs, starts analysis via `npm start` with tracer, starts observability, fails nonzero on readiness failure; live startup succeeded |
+| M-10 | Medium | `build-all.ps1` reports success without tests and hides C++ failures | **FIXED AND VERIFIED** | Runs Java `clean verify`, `dotnet test`, Node tests, dashboard tests/build, tracks failures, exits nonzero; `cpp-core` reported `SKIP` explicitly; live run passed |
+| M-11 | Medium | README/demo claim production-grade and zero-simulation behavior the code lacks | **FIXED AND VERIFIED** | README rewritten with honest local-demo scope, real auth/observability instructions, limitations, and status; demo runs 60/60 against real auth/telemetry and fails nonzero on missing telemetry |
+| L-01 | Low | Settings shows the wrong native binary path | **FIXED AND VERIFIED** | Settings reads `/api/analysis/native-core`; reports real checked paths, `NOT BUILT`, and build command instead of a hardcoded path |
+| L-02 | Low | Payment simulation is enabled by default outside prod profiles | **FIXED AND VERIFIED** | Simulation defaults false; only explicit `demo`/`dev`/`test`; `prod` aborts; disabled endpoints return 503; payment tests |
+| L-03 | Low | TraceDetail RCA button targets a nonexistent route | **FIXED AND VERIFIED** | Central route table, real RCA detail route, legacy `/incidents/:id` mapping, catch-all NotFound; router tests |
+| L-04 | Low | C++ core is unbuilt and unverified | **BLOCKED** | No CMake or C++ compiler (`cl`, `g++`, `clang++`, `msbuild`, `ninja` absent). JS fallback is tested and active; `/api/analysis/native-core` and Settings report `available:false`; `build-all.ps1` reports `cpp-core SKIP` |
+
+### 10.3 Completion
+
+- **33 / 34 findings FIXED AND VERIFIED (97.1%).**
+- **1 / 34 BLOCKED (L-04, native C++ toolchain absent).**
+- No finding is `PARTIALLY FIXED` or `FIXED BUT UNVERIFIED`.
+- The product is a verified local demo, not a production deployment. Known limitations are
+  documented in `README.md` and `PROJECT_CONTEXT.md`.
 
 
 

@@ -1,10 +1,12 @@
 # ARCHITECTURE — CausalOTel
 
-> Implemented architecture at audit baseline `a10bf0b` (2026-11-11). This document describes what the
-> code actually does, including components that are configured but **not running** and data paths that
-> are advertised but **not implemented**. Status labels: **IMPLEMENTED**, **VERIFIED**,
-> **PARTIALLY IMPLEMENTED**, **PLANNED**, **UNVERIFIED**. Findings are detailed in
-> [`AUDIT_REPORT.md`](AUDIT_REPORT.md); run/test context is in [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md).
+> **Current architecture after remediation (2026-11-13).** The original audit baseline was
+> `a10bf0b` (2026-11-11). Sections 1–6 describe the runtime shape and data model, updated where the
+> remediation changed them. Sections 7–12 describe the current telemetry, security, frontend,
+> operations, and status. The only unresolved finding is **L-04** (native C++ core), which is
+> **BLOCKED** by the absence of CMake/C++ tooling. Full finding statuses and evidence are in
+> [`AUDIT_REPORT.md`](AUDIT_REPORT.md) §10; run/test context is in
+> [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md).
 
 ## 1. System context
 
@@ -12,13 +14,13 @@ CausalOTel is a local polyglot e-commerce demo with an observability/RCA sidecar
 
 - **Business plane:** user, product, order, payment, and inventory services.
 - **Analysis plane:** a Node.js analysis engine and a React dashboard.
-- **Telemetry plane (intended):** OpenTelemetry Collector → Tempo for traces; Prometheus for metrics.
-- **Persistence:** one SQLite database per business service, plus an in-memory incident store and a
-  disk spool in the analysis engine. MongoDB is configured but not used.
+- **Telemetry plane (running):** OpenTelemetry Collector → Tempo for traces; Prometheus for metrics.
+- **Persistence:** one SQLite database per business service, plus a durable disk incident spool in the
+  analysis engine. MongoDB is not used.
 
-At the audit baseline the business plane and dashboard were running; the entire telemetry plane was
-not. The analysis engine therefore served synthetic traces, random metrics, and a static graph. See
-§7.
+After remediation the business plane, dashboard, and native telemetry plane all run locally. The
+analysis engine serves only real Tempo traces and Prometheus metrics; backend failures are explicit
+degraded/unavailable states. See §7.
 
 ## 2. Runtime topology
 
@@ -534,151 +536,168 @@ If none exists or the process fails/times out (500 ms), it calls the JavaScript
 `calculateSweepLine`. At the audit baseline **no binary existed and CMake was not installed**, so
 every calculation used `javascript_fallback`. The C++ path is **UNVERIFIED**.
 
-## 7. Observability: intended vs actual
 
-| Component | Intended | Actual at baseline | Status |
-|---|---|---|---|
-| OTel Collector | Receive OTLP gRPC `4317`/HTTP `4318`, batch, export to Tempo and Prometheus | Not running; ports closed | **PLANNED** |
-| Tempo | Store traces; HTTP `3200`, OTLP `4320` | Not running; storage paths hardcoded to `C:/Users/prath/...` | **PLANNED** |
-| Prometheus | Scrape Java `/actuator/prometheus`, inventory/analysis `/metrics` | Not running; `9090` closed | **PLANNED** |
-| Java tracing | Micrometer OTel bridge + OTLP exporter | Config present; export fails without collector | **PARTIALLY IMPLEMENTED** |
-| .NET tracing | OTel ASP.NET/HTTP instrumentation + OTLP exporter | Config present; export fails without collector | **PARTIALLY IMPLEMENTED** |
-| Analysis tracing | `src/tracer.js` NodeSDK | `start-all.ps1` runs `node src/server.js`, not `npm start`, so tracer is not loaded | **PARTIALLY IMPLEMENTED** |
-| Service metrics | Micrometer/Prometheus endpoints | Endpoints work locally | **IMPLEMENTED / VERIFIED** |
-| Analysis metrics API | Query Prometheus | Returns random/hardcoded values | **PARTIALLY IMPLEMENTED** |
-| Incident persistence | MongoDB + spool | In-memory Map; broken spool integration; no Mongo writes | **PARTIALLY IMPLEMENTED** |
-| Dashboard observability | Live topology/traces/metrics/incidents | Static or fallback data in several pages | **PARTIALLY IMPLEMENTED** |
+## 7. Observability: current implementation
 
-### 7.1 Why the dashboard can look healthy while telemetry is down
+| Component | Implementation | Runtime state |
+|---|---|---|
+| OTel Collector | `otelcol-contrib 0.165.0`; OTLP gRPC `4317`, HTTP `4318`; Prometheus exporter `8889`; health `13133` | Running; verified |
+| Tempo | `3.1.1`; query `3200`, OTLP `4320`; portable config rendered from `CAUSALOTEL_DATA_ROOT` | Running; verified |
+| Prometheus | `3.16.0`; scrape `9090`; scrapes Collector, Java services, inventory, analysis | Running; all targets `UP` |
+| Java tracing | Spring Boot 4 `spring-boot-starter-opentelemetry`; Micrometer OTLP export to `4318/v1/traces` | Running; real spans observed |
+| Analysis tracing | `node --import ./src/tracer.js`; `serviceName: analysis-engine` | Running; real spans observed |
+| .NET tracing | OTel ASP.NET/HTTP instrumentation + OTLP exporter configured | Metrics/health real; OTLP spans not emitted in this build |
+| Service metrics | Micrometer/Prometheus on Java; `/metrics` on inventory and analysis | Verified |
+| Analysis metrics API | Deterministic PromQL queries; typed 503 on Prometheus failure | Verified; `source: prometheus` |
+| Incident persistence | Durable disk spool; atomic writes; restart hydration; quarantine | Verified; `/health/ready` reports `store: disk-spool` |
+| Dashboard | Real authenticated APIs for health, traces, RCA, metrics, incidents, faults, graph, settings | Verified; no mock fallback |
 
-- `Incidents.jsx` seeds state with three fabricated incidents and only replaces them when the API
-  returns a non-empty array.
-- `Metrics.jsx` seeds with mock metrics and only replaces them if the response is an array; the
-  analysis API returns an object, so the mock array remains.
-- `Traces.jsx` and `TraceDetail.jsx` render hardcoded spans regardless of the API response.
-- `Overview.jsx` hardcodes `6 / 6`, `1` active incident, `98.4%` saga success, and per-service
-  latencies.
-- `DependencyGraph.jsx` always paints `payment-service` red.
-- `Settings.jsx` treats any probe exception as `ok: true`.
+### 7.1 Failure behavior
 
-These are correctness/integrity issues, not cosmetic ones: an operator can be shown a healthy or
-degraded system that does not correspond to the actual runtime.
+The analysis engine never substitutes synthetic data on the real path:
+
+- Tempo 404 → `404 TRACE_NOT_FOUND`; Tempo outage → `503 TEMPO_UNAVAILABLE`; malformed
+  response → `502 TEMPO_INVALID_RESPONSE`.
+- Prometheus outage → `503` with an explicit unavailable code.
+- The service graph returns an explicit empty graph when Tempo has no traces; it does not
+  paint a static topology.
+- The optional demo fixture is disabled by default, marked `synthetic: true`, never persisted,
+  and rejected by RCA scoring.
+- Dashboard pages render an explicit error/unavailable panel when an API fails.
+
+### 7.2 Trace and graph flow
+
+1. Java services and the analysis engine export OTLP spans to the Collector.
+2. The Collector batches spans to Tempo and exposes its own metrics to Prometheus.
+3. The analysis engine lists recent traces with a window, fetches details with bounded
+   concurrency (default 5), and computes self-time and RCA evidence. The trace list can be
+   narrowed with exact `service` and `operation` filters, which are converted into escaped
+   TraceQL clauses.
+4. The graph builder derives service nodes/edges from direct parent/child spans across service
+   boundaries. Scheduler (`task ...`) and actuator/health roots are excluded by a Tempo
+   `rootName` TraceQL filter and by a defensive client-side check, so the business topology is
+   not drowned out by maintenance traffic.
+5. Incidents are written atomically to the disk spool before the API reports `persisted: true`.
 
 ## 8. Security and trust boundaries
 
 ```mermaid
 flowchart LR
   subgraph Untrusted["Untrusted network / any local process"]
-    X["Any HTTP client"]
+    X["HTTP client"]
   end
 
-  subgraph Public["No authentication"]
+  subgraph Auth["Signed bearer token required"]
     U["user-service :8081"]
     P["product-service :8082"]
     O["order-service :8083"]
     PAY["payment-service :8084"]
     I["inventory-service :5050"]
-    A["analysis-engine :5000"]
   end
 
-  subgraph Sensitive["Sensitive operations"]
+  subgraph Admin["ROLE_ADMIN or ROLE_SERVICE"]
     F1["POST /api/payments/fault"]
     F2["POST /api/inventory/fault"]
-    S1["POST /api/analysis/spool"]
-    B1["POST /api/orders/checkout"]
-    B2["POST /api/payments/refund"]
+    R1["POST /api/orders/{id}/reconcile"]
+    R2["GET /api/payments/**"]
   end
 
-  X --> U
-  X --> P
-  X --> O
-  X --> PAY
-  X --> I
-  X --> A
-  X --> F1
-  X --> F2
-  X --> S1
-  X --> B1
-  X --> B2
+  X -->|"Authorization: Bearer v1..."| U
+  X -->|"Authorization: Bearer v1..."| P
+  X -->|"Authorization: Bearer v1..."| O
+  X -->|"Authorization: Bearer v1..."| PAY
+  X -->|"Authorization: Bearer v1..."| I
+  X -->|"ROLE_ADMIN"| F1
+  X -->|"ROLE_ADMIN"| F2
+  X -->|"ROLE_ADMIN"| R1
+  X -->|"ROLE_ADMIN/SERVICE"| R2
 ```
 
-There is no authentication or authorization on business APIs or fault controls. The only guarded
-endpoint is `POST /api/users/bootstrap-admin`, which requires the one-time bootstrap token. The
-spool endpoint accepts an arbitrary `incidentId` that is embedded in a filesystem path (C-01). The
-fault endpoints can disable or degrade checkout for every caller (H-01). See AUDIT_REPORT H-02 for
-the broader missing-auth finding.
+- Tokens are HMAC-SHA256 signed: `v1.<base64url(payload)>.<base64url(hmac)>`.
+  The shared secret comes from `AUTH_TOKEN_SECRET` / `auth.token.secret`; the development
+  fallback constant is not a production secret.
+- Roles: `ROLE_USER`, `ROLE_ADMIN`, `ROLE_SERVICE`.
+- Registration always creates `ROLE_USER`. The first admin is created from a one-time bootstrap
+  token file; an expired, unconsumed token is regenerated on startup.
+- Order reads are scoped to the authenticated user; checkout requires `userId` to match the token
+  subject for non-admin/service callers.
+- Payment reads and fault control are admin/service only.
+- Fault injection is bounded, audited, and can be disabled with
+  `causalotel.fault-injection.enabled=false` / `CAUSALOTEL_FAULT_INJECTION_ENABLED=false`.
+- Payment simulation defaults off and is only permitted under explicit `demo`, `dev`, or `test`
+  profiles; `prod`/`production` aborts. Disabled charge/refund/fault endpoints return `503`.
+- Incident IDs are validated against a filename-safe pattern and the resolved spool path must be a
+  direct child of the spool root.
 
 ## 9. Frontend data wiring
 
-| Page | Request | Expected shape | Actual/fallback behavior |
-|---|---|---|---|
-| Overview | none for health; `POST /api/orders/checkout` | checkout response | Static health/KPIs; checkout is real |
-| Services | none | n/a | Static `ONLINE` cards |
-| DependencyGraph | `GET /api/analysis/graph` | `{nodes, edges, sccs, hasCycle}` | Matches; payment node always red |
-| Traces | none | n/a | Hardcoded `mockTraces` |
-| TraceDetail | `POST /api/analysis/analyze-trace` | RCA result | Fetches but renders hardcoded spans |
-| Incidents | `GET /api/analysis/incidents` | array with `incidentId, culpritService, rootCauseType, severity, confidenceScore, summary, status, createdAt` | Fabricated fallback; real incidents use `primaryRootCause.service` |
-| RcaDetail | `GET /api/analysis/incidents/:id` | `{culprit, anomalyScore, evidence[], causalPath[], sweepLineMetrics, remediations[]}` | Backend returns `{primaryRootCause, rankedCandidates, causalPath[], traceSummary, topology}`; real response can crash the page |
-| Metrics | `GET /api/analysis/metrics` | array of `{service, port, rps, p50, p95, p99, errorRate, dbConnections, status}` | Backend returns object keyed by service; mock array remains |
-| FaultInjection | `POST /api/payments/fault`, `POST /api/inventory/fault` | `{faultMode, latencyMs, errorMessage}` / `{latencyMs, simulateBusy, simulateError, errorMessage}` | Sends `{mode, latencyMs}`; payment/inventory ignore `mode` |
-| Settings | direct `GET http://localhost:{port}/health/live` | health response | Any exception is shown as `UP (Local Host)` |
+| Page | Request | Behavior |
+|---|---|---|
+| Login | `POST /api/users/login`, `POST /api/users/register`, `POST /api/users/bootstrap-admin` | Real auth; all routes gated |
+| Overview | `GET /api/analysis/services`, incidents, metrics | Real probes; explicit unavailable states |
+| Services | `GET /api/analysis/services` | Server-side probe results only |
+| DependencyGraph | `GET /api/analysis/graph?window=...` | Real Tempo parent/child topology, cache/window metadata |
+| Traces | `GET /api/analysis/traces` | Real Tempo search rows; empty state if none |
+| TraceDetail | `GET /api/analysis/traces/:id`, `POST /api/analysis/analyze-trace` | Real span waterfall; RCA action uses the real detail route |
+| Incidents | `GET /api/analysis/incidents` | Durable spool incidents; no fabricated fallback |
+| RcaDetail | `GET /api/analysis/incidents/:id` | Real incident contract; legacy `/incidents/:id` maps here |
+| Metrics | `GET /api/analysis/metrics` | Real `{source, generatedAt, window, services}` object |
+| FaultInjection | payment/inventory fault endpoints | Exact backend payloads; admin-only |
+| Settings | `GET /api/analysis/services`, `GET /api/analysis/native-core` | Real health and real native build state (`NOT BUILT` when absent) |
 
 ## 10. Deployment and scripts
 
-| Script | Actual behavior | Architectural consequence |
-|---|---|---|
-| `start-all.ps1` | Starts 7 processes; prefers existing JAR/DLL; waits on `/health/live` only | Stale artifacts can run; readiness/DB failures not detected; observability stack not started; analysis tracer not loaded |
-| `stop-all.ps1` | Kills recorded PIDs and any listener on the 7 ports | Broad but functional |
-| `build-all.ps1` | Compiles Java, builds .NET, syntax-checks Node, builds dashboard, optionally C++ | Prints "ALL ... BUILT SUCCESSFULLY" even when C++ is skipped; does not run tests |
-| `test-all.ps1` | Runs all test suites in place | Uses live `%LOCALAPPDATA%` databases; user tests delete users; not hermetic |
-| `demo-checkout-rca.ps1` | Health checks, baseline checkout, fault injection, reconciliation, Tempo/graph probes | Calls Tempo `/api/traces` (not a valid search endpoint), treats analysis static graph as live evidence, and claims "zero fabrication" despite synthetic RCA fallbacks |
+| Script | Behavior |
+|---|---|
+| `install-observability.ps1` | Downloads pinned Collector/Tempo/Prometheus archives, verifies SHA-256, extracts to `tools/observability` |
+| `start-observability.ps1` | Renders Tempo config from `CAUSALOTEL_DATA_ROOT`, starts the stack, waits for readiness |
+| `stop-observability.ps1` | Stops recorded observability PIDs and listeners |
+| `verify-observability.ps1` | Sends a real OTLP span, verifies Tempo storage and analysis-engine read, verifies Prometheus targets |
+| `start-all.ps1` | Rebuilds stale artifacts, checks ports/PIDs, starts observability and seven app processes, waits for readiness, exits nonzero on failure |
+| `stop-all.ps1` | Stops recorded PIDs and any listener on application/observability ports |
+| `build-all.ps1` | Runs Java `clean verify`, `dotnet test`, Node tests, dashboard tests/build, optional native build; tracks failures and exits nonzero; reports `cpp-core SKIP` when CMake is absent |
+| `test-all.ps1` | Isolated 7-suite run with redirected `LOCALAPPDATA`, temp DB paths, live DB/spool fingerprints, nonzero exit on failure |
+| `demo-checkout-rca.ps1` | Real auth, catalog price, baseline checkout, admin fault, recovery/reconcile, Tempo trace, persisted RCA, Prometheus targets; fails nonzero on missing telemetry |
 
 ## 11. Status matrix
 
 | Component | Status | Notes |
 |---|---|---|
-| User bootstrap | IMPLEMENTED | Token hashing, expiry, lockout, atomic consumption |
-| User read API | PARTIALLY IMPLEMENTED | UUID/int mismatch; live list returns `[]` |
-| Product catalog | IMPLEMENTED / VERIFIED | Read-only, seeded |
-| Order checkout happy path | IMPLEMENTED / VERIFIED | 16 tests pass on clean isolated run |
-| Order compensation/reconciliation | PARTIALLY IMPLEMENTED | Outbox and stale recovery exist; defects H-06/H-07/M-01 |
-| Payment charge/refund | IMPLEMENTED / VERIFIED | 19 tests pass; in-process locks only |
-| Inventory reservation | IMPLEMENTED | 11 tests pass; race/partial-idempotency gaps |
-| Inventory expiry | IMPLEMENTED | DB transaction spans HTTP calls |
-| Fault injection backend | IMPLEMENTED | No auth |
-| Fault injection frontend | PARTIALLY IMPLEMENTED | Wrong payload contract |
-| Tarjan graph algorithm | IMPLEMENTED / VERIFIED | Unit tests pass |
-| Runtime graph endpoint | PARTIALLY IMPLEMENTED | Hardcoded topology, not derived from telemetry |
-| JS sweep-line | IMPLEMENTED / VERIFIED | 8 tests pass |
-| C++ sweep-line | UNVERIFIED | Source present; no binary, no CMake |
-| Tempo integration | PLANNED | Not running; synthetic fallback |
-| Prometheus integration | PLANNED | Not running; random fallback |
-| Incident persistence | PARTIALLY IMPLEMENTED | Memory + broken spool; Mongo unused |
-| RCA heuristic | PARTIALLY IMPLEMENTED | Real code, synthetic test path |
-| Dashboard incidents/RCA | PARTIALLY IMPLEMENTED | Contract mismatch, fabricated fallback |
-| Dashboard traces | PARTIALLY IMPLEMENTED | UI exists; hardcoded data |
-| Dashboard metrics | PARTIALLY IMPLEMENTED | UI exists; mock array retained |
-| OTel export | PARTIALLY IMPLEMENTED | No collector/Tempo; analysis tracer not loaded by script |
-| MongoDB | PLANNED | Connection only |
-| Authentication/authorization | PLANNED | None on business/fault APIs |
+| User bootstrap + auth | IMPLEMENTED / VERIFIED | Signed tokens, roles, one-time admin bootstrap, expired-token regeneration |
+| User read API | IMPLEMENTED / VERIFIED | UUID `TEXT` end to end |
+| Product catalog | IMPLEMENTED / VERIFIED | Authenticated reads, authoritative prices |
+| Order checkout happy path | IMPLEMENTED / VERIFIED | Server pricing, canonical idempotency, transactional saga |
+| Order compensation/reconciliation | IMPLEMENTED / VERIFIED | Leases, backoff, refund escalation, late-commit handling |
+| Payment charge/refund | IMPLEMENTED / VERIFIED | Striped locks, simulation gating |
+| Inventory reservation | IMPLEMENTED / VERIFIED | Unique `(OrderId, Sku)`, request hash, state machine |
+| Inventory expiry | IMPLEMENTED / VERIFIED | HTTP resolution before write transactions |
+| Fault injection backend/frontend | IMPLEMENTED / VERIFIED | Admin-only, bounded, exact payloads |
+| Tarjan graph algorithm | IMPLEMENTED / VERIFIED | Unit tests |
+| Runtime graph endpoint | IMPLEMENTED / VERIFIED | Tempo-derived, filtered, bounded concurrency |
+| JS sweep-line | IMPLEMENTED / VERIFIED | Tested fallback |
+| C++ sweep-line | **BLOCKED** | No CMake/compiler; explicit `NOT BUILT` status |
+| Tempo integration | IMPLEMENTED / VERIFIED | Real spans, typed errors |
+| Prometheus integration | IMPLEMENTED / VERIFIED | Real metrics, typed errors |
+| Incident persistence | IMPLEMENTED / VERIFIED | Durable disk spool |
+| RCA heuristic | IMPLEMENTED / VERIFIED | Real traces only; synthetic rejected |
+| Dashboard incidents/RCA | IMPLEMENTED / VERIFIED | Real contracts |
+| Dashboard traces | IMPLEMENTED / VERIFIED | Real Tempo data |
+| Dashboard metrics | IMPLEMENTED / VERIFIED | Real Prometheus data |
+| OTel export | IMPLEMENTED / VERIFIED | Java + analysis; inventory metrics only |
+| Authentication/authorization | IMPLEMENTED / VERIFIED | All business/fault APIs |
+| MongoDB | NOT USED | Removed from readiness/storage path |
 
-## 12. Architectural risks
+## 12. Architectural risks and limitations
 
-1. **The demo's central claim is not backed by the running system.** The README and demo script
-   describe live OTel/Tempo/Prometheus RCA, but the telemetry backends are absent and the analysis
-   engine fabricates traces/metrics.
-2. **The checkout saga is the strongest implemented subsystem, but its failure handling is not
-   production-safe.** Weak idempotency, swallowed outbox errors, stale-saga races, no HTTP timeouts,
-   and an expiry worker holding a DB transaction across network calls can all produce inconsistent
-   orders or availability loss.
-3. **The dashboard can display fabricated health and incidents.** Fallback data is indistinguishable
-   from live data in the UI.
-4. **The security boundary is effectively absent.** Any local/network caller can inject faults,
-   create orders at arbitrary prices, refund payments, or write spool files outside the spool
-   directory.
-5. **Test execution is not isolated.** Running the documented test script can delete live user data
-   and pollute order/payment databases.
-6. **The native C++ path is unverified.** The JS fallback is tested; the C++ binary and IPC parity are
-   not.
-
-Fixes should be sequenced as described in `AUDIT_REPORT.md` §8 and `PROJECT_CONTEXT.md` §11.
+1. **Local demo, not production.** SQLite, local processes, no TLS, no horizontal scaling, no
+   secrets manager, no deployment manifests.
+2. **Payment is simulated.** No real transactions; simulation is profile-gated and off by default.
+3. **Native C++ path is unverified.** The JS fallback is active; L-04 is blocked by the missing
+   toolchain.
+4. **Inventory is not traced in Tempo.** It is visible to Prometheus and health probes but does not
+   emit OTLP spans in this build.
+5. **Long-lived local databases may contain historical rows** from earlier runs; they are not
+   fixtures.
+6. **The dashboard is an operator demo**, not a hardened multi-tenant console.
+7. **The analysis engine is a single process.** Its cache and in-memory incident index are local;
+   the disk spool is the durable source of truth.

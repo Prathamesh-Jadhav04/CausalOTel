@@ -1,184 +1,313 @@
 # CausalOTel
-### *Distributed Microservices Root Cause Analysis Platform*
 
-[![Architecture](https://img.shields.io/badge/Architecture-Distributed%20Microservices-blue.svg)](#architecture)
-[![Observability](https://img.shields.io/badge/Telemetry-OpenTelemetry%20%7C%20Tempo%20%7C%20Prometheus-orange.svg)](#observability-pipeline)
-[![Backend](https://img.shields.io/badge/Backend-Java%2025%20Spring%20Boot%20%7C%20.NET%2010%20LTS-green.svg)](#microservices-architecture)
-[![Algorithm](https://img.shields.io/badge/Core%20Algorithm-C%2B%2B20%20Sweep--Line%20Interval%20Union-red.svg)](#self-time-calculation--the-sweep-line-algorithm)
-[![Frontend](https://img.shields.io/badge/Frontend-React%20%7C%20Tailwind%20CSS%20%7C%20Vite-cyan.svg)](#frontend-dashboard)
+**A locally runnable, polyglot microservices demo with real OpenTelemetry tracing,
+Tempo-backed root cause analysis, Prometheus metrics, and an authenticated dashboard.**
+
+CausalOTel is a **local development and demonstration platform**, not a production
+service. It runs five business services plus an analysis engine, a React dashboard,
+and a native Windows observability stack (OTel Collector, Tempo, Prometheus). All
+telemetry used by RCA comes from real spans and metrics emitted by the running
+services. When a backend is unavailable, the system reports an explicit degraded or
+unavailable state; it does not fabricate traces, metrics, incidents, or RCA results.
+
+> **Honest status:** 33 of the 34 findings in [`AUDIT_REPORT.md`](AUDIT_REPORT.md) are
+> `FIXED AND VERIFIED`. The remaining finding, **L-04 (native C++ core)**, is
+> `BLOCKED` because this machine has no CMake or C++ compiler. The JavaScript
+> sweep-line fallback is active and tested; the native binary is not built.
 
 ---
 
-## Executive Overview
-
-**CausalOTel** is a production-grade distributed microservices observability and deterministic root cause analysis (RCA) platform. Modern distributed systems fail in cascading, non-linear ways: a slow downstream database query or network partition in a leaf microservice propagates latency and timeouts upstream, causing orchestrators to appear degraded while hiding the true point of failure.
-
-CausalOTel solves this by collecting standardized **OpenTelemetry** traces across a polyglot microservices estate (Java Spring Boot and ASP.NET Core), modeling runtime service communication as dynamic dependency graphs, and utilizing a **C++20 Sweep-Line Interval Union engine** to compute mathematically exact **Self-Time** across overlapping parallel child spans. 
-
----
-
-## High-Level System Architecture
+## Architecture
 
 ```
-                                  [ REACT DASHBOARD ] (Vite + Tailwind CSS - Port 3000)
-                                           │
-                                           ▼ (Axios REST API)
-                             [ CAUSAL-OTEL ANALYSIS ENGINE ] (Port 5000)
-                                 ├── C++20 DSA Native Kernel (Sweep-Line Interval Union Daemon)
-                                 ├── Graph Engine (Tarjan's SCC Cycle Detection & Condensed DAG)
-                                 └── Evidence & Suspiciousness Ranking Generator
-                                           ▲
-                     ┌─────────────────────┴─────────────────────┐
-                     │                                           │
-          [ Prometheus (Metrics) ]                     [ Tempo / OTLP Collector ]
-                     ▲                                           ▲
-                     │ (Scrapes Metrics)                         │ (Exports OTLP Traces)
-  ═══════════════════╪═══════════════════════════════════════════╪══════════════════════════════
-                     │          E-COMMERCE MICROSERVICES         │
-                     │                                           │
-        ┌────────────┴─────────────┐                ┌────────────┴────────────┐
-        │   User Service (Java)    │                │  Product Service (Java) │
-        │  Spring Boot - Port 8081 │                │ Spring Boot - Port 8082 │
-        └────────────▲─────────────┘                └────────────▲────────────┘
-                     │                                           │
-                     │ (REST / W3C traceparent)                  │ (REST / W3C traceparent)
-                     │                                           │
-        ┌────────────┴───────────────────────────────────────────┴────────────┐
-        │                     Order Service (Java)                            │
-        │                   Spring Boot - Port 8083                           │
-        └────────────────────┬───────────────────────────────────┬────────────┘
-                             │                                   │
-   (REST / W3C traceparent)  │         (Polyglot REST Boundary)  │ (REST / W3C traceparent)
-                             ▼                                   ▼
-        ┌──────────────────────────┐                ┌─────────────────────────┐
-        │   Payment Service (Java) │                │ Inventory Service (.NET)│
-        │  Spring Boot - Port 8084 │                │  ASP.NET Core - Port 5050│
-        └──────────────────────────┘                └─────────────────────────┘
+                    React dashboard (Vite, :3000)
+                              |
+                              | authenticated REST
+                              v
+                 Analysis engine (Node/Express, :5000)
+                   |-- RCA scoring + Tarjan SCC graph
+                   |-- durable disk incident spool
+                   |-- JS sweep-line fallback (C++ binary optional)
+                   |
+          +-------------------+-------------------+
+          |                                       |
+          v                                       v
+   Tempo (:3200 query, :4320 OTLP)        Prometheus (:9090)
+          ^                                       ^
+          | OTLP/HTTP :4318                       | scrape
+   OTel Collector (:4317 gRPC, :4318 HTTP, :8889 exporter)
+          ^
+          | W3C traceparent + OTLP
+          |
+  user :8081  product :8082  order :8083  payment :8084  inventory :5050
+   (Java 25 / Spring Boot 4)                              (.NET 10)
 ```
+
+### Services
+
+| Service | Stack | Port | Responsibility |
+|---|---|---:|---|
+| user-service | Java 25 / Spring Boot 4 | 8081 | Registration, login, signed bearer tokens, roles |
+| product-service | Java 25 / Spring Boot 4 | 8082 | Catalog and authoritative prices |
+| order-service | Java 25 / Spring Boot 4 | 8083 | Checkout saga, idempotency, outbox, reconciliation |
+| payment-service | Java 25 / Spring Boot 4 | 8084 | Simulated charge/refund, admin-only fault injection |
+| inventory-service | C# / ASP.NET Core 10 | 5050 | Reservation state machine, commit/release, expiry worker |
+| analysis-engine | Node.js 26 / Express | 5000 | Tempo/Prometheus clients, RCA, graph, incident store |
+| dashboard | React 19 / Vite / Tailwind | 3000 | Authenticated operator UI |
+
+Every Java service and the analysis engine export OTLP spans to the collector. The
+inventory service exposes Prometheus metrics and health endpoints; it does not emit
+OTLP spans in this build. The dashboard is a browser client and does not emit
+telemetry.
 
 ---
 
-## Polyglot Microservices Suite
+## Prerequisites
 
-The target application models an enterprise e-commerce system with clear domain boundaries:
+- Windows 10/11 with PowerShell 5.1 or newer.
+- **Java 25** and the Maven Wrapper (`mvnw.cmd`) in each Java service.
+- **.NET 10 SDK** on `PATH`.
+- **Node.js 26** with `npm.cmd` (the `npm.ps1` shim may be blocked by execution policy).
+- Free ports: `3000`, `5000`, `5050`, `8081`–`8084`, `3200`, `4317`, `4318`, `4320`,
+  `8889`, `9090`, `13133`.
+- Optional: CMake + a C++20 compiler for the native sweep-line core (not installed
+  in the verification environment).
 
-| Microservice | Technology Stack | Port | Primary Responsibility |
-|---|---|:---:|---|
-| **User Service** | Java 25 / Spring Boot 4.0 | `8081` | User profile verification, authentication context, loyalty tier metadata. |
-| **Product Service** | Java 25 / Spring Boot 4.0 | `8082` | Product catalog, pricing validation, stock availability metadata. |
-| **Order Service** | Java 25 / Spring Boot 4.0 | `8083` | Saga orchestrator coordinating the checkout transaction lifecycle. |
-| **Payment Service** | Java 25 / Spring Boot 4.0 | `8084` | Payment transaction processing and simulated third-party gateway latency. |
-| **Inventory Service** | C# / ASP.NET Core 10 LTS | `5050` | Warehouse stock reservation and compensatory release via Polly resilience policies. |
-
-### Cross-Runtime Context Propagation
-Distributed tracing across the Java and .NET boundary is maintained via the **W3C Trace Context specification (`traceparent`)**:
-```http
-traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
-```
-When Order Service (Java) issues an HTTP request to Inventory Service (.NET), the trace context is transparently injected by the OpenTelemetry Java Agent and extracted by the ASP.NET Core OpenTelemetry SDK, forming an unbroken trace hierarchy.
+No Docker, Kubernetes, WSL2, Redis, Kafka, or RabbitMQ is required or used.
 
 ---
 
-## CDAC Curriculum: 7-Subject Demonstration Matrix
+## Quick start
 
-Every core CDAC subject has an architectural, demonstrable responsibility in CausalOTel:
+Run these commands from the repository root in PowerShell:
 
-| # | CDAC Subject | Concrete Implementation Feature |
+```powershell
+# 1. Download and SHA-256 verify the pinned native observability binaries.
+#    Installs into tools/observability (gitignored).
+.\scripts\install-observability.ps1
+
+# 2. Build and test every component. Fails if any service is still running.
+.\scripts\build-all.ps1
+
+# 3. Start observability, all seven application processes, and wait for readiness.
+.\scripts\start-all.ps1
+
+# 4. Prove OTLP -> Tempo -> analysis-engine and Prometheus scraping work.
+.\scripts\verify-observability.ps1
+
+# 5. Run the authenticated checkout + fault + recovery + RCA demo.
+.\scripts\demo-checkout-rca.ps1
+
+# 6. Stop everything.
+.\scripts\stop-all.ps1
+```
+
+### Running the tests
+
+For trustworthy live-database integrity evidence, stop the mesh first. The test
+runner redirects `LOCALAPPDATA` to a fresh temporary root and fingerprints the live
+databases and incident spool before and after the run.
+
+```powershell
+.\scripts\stop-all.ps1
+.\scripts\test-all.ps1
+```
+
+`test-all.ps1` runs seven suites:
+
+1. user-service (`mvnw.cmd test`)
+2. product-service (`mvnw.cmd test`)
+3. order-service (`mvnw.cmd test`)
+4. payment-service (`mvnw.cmd test`)
+5. inventory-service (`dotnet test`)
+6. analysis-engine (`npm.cmd test`)
+7. dashboard contract/auth/router tests (`npm.cmd test`)
+
+It exits nonzero if any suite fails or if any live database or the live incident
+spool changed.
+
+### Access points
+
+| Endpoint | URL |
+|---|---|
+| Dashboard | <http://localhost:3000> |
+| Analysis API | <http://localhost:5000/api/analysis> |
+| Health | `/health/live` on every service; `/health/ready` on analysis-engine |
+| Java metrics | `/actuator/prometheus` |
+| Inventory/analysis metrics | `/metrics` |
+| Tempo | <http://localhost:3200> |
+| Prometheus | <http://localhost:9090> |
+| Collector health | <http://localhost:13133> |
+
+---
+
+## Authentication and roles
+
+All business APIs require a signed bearer token. Tokens are HMAC-SHA256 signed
+(`v1.<base64url(payload)>.<base64url(hmac)>`) and carry a role:
+
+- `ROLE_USER` — register/login, browse catalog, create and read own orders.
+- `ROLE_ADMIN` — read all payments, inspect/reconcile orders, control fault injection.
+- `ROLE_SERVICE` — service-to-service calls.
+
+Registration always creates `ROLE_USER`. The first administrator is provisioned with
+a one-time bootstrap token:
+
+```text
+%LOCALAPPDATA%\CausalOTel\security\.bootstrap_admin_token
+```
+
+The dashboard login page exposes the bootstrap form. The token is consumed on success;
+an expired, unconsumed token is regenerated on user-service startup. The demo script
+stores the generated admin credentials outside the repository at:
+
+```text
+%LOCALAPPDATA%\CausalOTel\demo\admin-credentials.json
+```
+
+Never commit that file. For non-demo use, set `AUTH_TOKEN_SECRET` (or
+`auth.token.secret`) to a private value; the development fallback constant is not a
+production secret.
+
+---
+
+## Observability pipeline
+
+The stack uses portable native Windows binaries pinned to:
+
+| Component | Version | Ports |
 |---|---|---|
-| **1** | **C++ Programming** | `cpp-core/`: Standalone C++20 high-performance engine executing the Sweep-Line Interval Union algorithm. Runs as a persistent daemon with NDJSON communication and benchmark comparison. |
-| **2** | **Data Structures & Algorithms (DSA)** | Directed Acyclic Graph (DAG) construction, Tarjan's Strongly Connected Components (SCC) for cycle condensation, $O(N \log N)$ Sweep-Line Interval Union, Priority Queues for Top-$K$ ranking. |
-| **3** | **Database Technologies** | **Dual Database Pattern**: Relational SQL (H2/PostgreSQL) for transactional ACID guarantees in Order, Payment, and Inventory services; Document MongoDB for schema-free polymorphic incident reports and baseline telemetry. |
-| **4** | **Web Programming Technologies** | `dashboard/`: Full-stack interactive dashboard built with React, Vite, Tailwind CSS, React Router, and Axios. Gantt-style trace waterfalls and dynamic SVG/Canvas dependency graphs. |
-| **5** | **Java Programming** | Concurrency with `CompletableFuture.allOf()` for parallel downstream fan-out, Java 8+ Streams API, custom domain exception hierarchy, and clean OOP principles. |
-| **6** | **Spring Boot** | Core microservices: Layered architecture (`Controller` $\to$ `Service` $\to$ `Repository`), Dependency Injection, Bean Validation (`@Valid`), Spring Boot Actuator, and OpenTelemetry auto-instrumentation. |
-| **7** | **.NET** | `services/inventory-service/`: ASP.NET Core 10 LTS Web API, native Dependency Injection (`IServiceCollection`), Polly resilience policies, and native `OpenTelemetry.Extensions.Hosting`. |
+| otelcol-contrib | 0.165.0 | 4317 (gRPC), 4318 (HTTP), 8889 (Prometheus exporter), 13133 (health) |
+| Tempo | 3.1.1 | 3200 (query), 4320 (OTLP) |
+| Prometheus | 3.16.0 | 9090 |
+
+`scripts/install-observability.ps1` downloads the pinned archives, verifies SHA-256,
+and extracts them under `tools/observability` (gitignored). Tempo's config uses a
+`__DATA_ROOT__` placeholder rendered from `CAUSALOTEL_DATA_ROOT`; no machine-specific
+absolute paths are committed.
+
+`scripts/verify-observability.ps1` sends a real OTLP span, waits for Tempo to store
+it, reads it back through the analysis engine with `synthetic=false`, and confirms
+Prometheus reports every scrape target as `UP`.
+
+### What is real vs. simulated
+
+- **Real:** traces, spans, span parent/child relationships, Prometheus metrics,
+  service health probes, incidents persisted to the disk spool, RCA results computed
+  from those traces/metrics, checkout/saga state in SQLite.
+- **Simulated:** payment gateway behavior. Payment simulation is disabled by default
+  and is only allowed under explicit `demo`, `dev`, or `test` profiles. Under `prod`
+  or `production` the service refuses to start with simulation enabled. When
+  simulation is disabled, charge/refund/fault endpoints return `503`.
+- **Not fabricated:** the analysis engine never substitutes synthetic traces,
+  metrics, incidents, health, or topology when a backend fails. Demo fixtures are
+  opt-in only, are marked `synthetic: true`, are never persisted, and are rejected by
+  RCA scoring.
 
 ---
 
-## Self-Time Calculation & The Sweep-Line Algorithm
+## RCA and dependency graph
 
-A core flaw of naive observability tools is calculating a parent span's self-time by subtracting the simple sum of child durations:
-$$\text{Naive Self-Time} = \text{Duration}(P) - \sum_{i} \text{Duration}(c_i) \quad \text{\textbf{(INCORRECT for Parallel Calls)}}$$
+1. Services propagate W3C trace context and export OTLP spans.
+2. The collector exports spans to Tempo and exposes its own metrics to Prometheus.
+3. The analysis engine queries Tempo for traces and Prometheus for service metrics.
+4. RCA computes per-span self-time, ranks suspicious services, and emits evidence,
+   causal paths, and remediations.
+5. Incidents are written atomically to the durable disk spool and hydrated on restart.
+6. The dependency graph is derived from real Tempo parent/child spans scoped to the
+   selected window (`30s`, `15m`, `1h`, `24h`), enriched with live health metadata,
+   and cached with source/window/timestamp metadata. Scheduler and actuator/health
+   traces are excluded by a Tempo `rootName` TraceQL filter and by a defensive
+   client-side check; trace-detail fetches use bounded concurrency so Tempo is not
+   overwhelmed. The trace list API accepts optional `service` and `operation`
+   filters so a specific business trace is not crowded out by maintenance traffic.
 
-When downstream calls execute concurrently, simple addition causes overlapping intervals to be subtracted multiple times, resulting in false zero or negative self-times.
-
-### The CausalOTel Solution
-1. **Clipping**: Each direct child span interval $[s_{c_i}, e_{c_i}]$ is clipped to the parent span's active lifetime $[s_P, e_P]$:
-   $$s'_i = \max(s_{c_i}, s_P), \quad e'_i = \min(e_{c_i}, e_P)$$
-2. **Sweep-Line Interval Union**: Clipped intervals are sorted by start time and merged into disjoint continuous intervals $\mathcal{U} = \bigcup [s'_j, e'_j]$ in $O(N \log N)$ time.
-3. **Exact Self-Time**:
-   $$\text{SelfTime}(P) = \text{Duration}(P) - \sum_{j} (e'_j - s'_j)$$
-
----
-
-## Deterministic Root Cause Analysis Formula
-
-CausalOTel avoids "black-box AI" and uses an evidence-based, deterministic suspiciousness score $\mathcal{S}(v) \in [0, 100]$:
-
-$$\mathcal{S}(v) = 0.35 \cdot \mathcal{A}_{\text{dev}}(v) + 0.30 \cdot \mathcal{C}_{\text{contrib}}(v) + 0.25 \cdot \mathcal{E}_{\text{origin}}(v) + 0.10 \cdot \mathcal{K}_{\text{critical}}(v)$$
-
-* **$\mathcal{A}_{\text{dev}}(v)$ (Baseline Z-Score Deviation)**: How many standard deviations service $v$'s self-time exceeded historical baseline ($\mu_{\text{self}}, \sigma_{\text{self}}$).
-* **$\mathcal{C}_{\text{contrib}}(v)$ (Latency Spike Contribution)**: The fraction of the total trace delay explained by service $v$'s self-time.
-* **$\mathcal{E}_{\text{origin}}(v)$ (Error Origination Factor)**: 100 if service $v$ is the origin point of an unhandled exception or 5xx, 20 if it merely cascaded an error from a child.
-* **$\mathcal{K}_{\text{critical}}(v)$ (Critical Path Weight)**: Indicates whether service $v$'s execution delay held back the overall trace completion.
-
-*All assessments are transparently labeled as **Heuristic Rule-Based** until calibrated against synthetic fault-injection datasets.*
+`POST /api/analysis/analyze-trace` returns `persisted: true` only after the incident
+is durably spooled. If Tempo or Prometheus is unavailable, the API returns typed
+`400`/`404`/`502`/`503` problem details instead of a fabricated result.
 
 ---
 
-## Repository Structure
+## Test isolation
 
+- Every suite runs with `LOCALAPPDATA` redirected to a fresh temp directory and an
+  explicit temporary `SQLITE_DB_PATH`.
+- Java tests use `@DynamicPropertySource` plus per-service test-resource fallbacks
+  under `java.io.tmpdir`.
+- Destructive cleanup guards reject non-temp or live paths.
+- Analysis-engine tests run with `--import ./test/setup-env.js`, which creates an
+  isolated temp spool root.
+- `test-all.ps1` fingerprints the live databases and incident spool before and after
+  the run and fails if either changes.
+
+---
+
+## Native C++ core (L-04: BLOCKED)
+
+The C++20 sweep-line interval-union core is present under `cpp-core/`, but this
+environment has no CMake and no C++ compiler (`cl`, `g++`, `clang++`, `msbuild`, and
+`ninja` are all absent). The binary is therefore **not built or verified**.
+
+- The analysis engine uses the tested JavaScript fallback.
+- `GET /api/analysis/native-core` reports `available: false`, the exact expected
+  binary paths it checked, and the build command.
+- `build-all.ps1` reports `cpp-core SKIP` and does not claim a successful native build.
+- The dashboard Settings page displays `NOT BUILT` rather than a fake path.
+
+To verify the native path on a machine with the toolchain:
+
+```powershell
+cmake -S cpp-core -B cpp-core/build
+cmake --build cpp-core/build --config Release
 ```
-CausalOTel/
-├── .gitignore                              # Comprehensive multi-runtime gitignore
-├── README.md                               # Architecture blueprint & documentation
-│
-├── services/                               # Polyglot E-Commerce Microservices
-│   ├── user-service/                       # Java 25 / Spring Boot 4.0 (Port 8081)
-│   ├── product-service/                    # Java 25 / Spring Boot 4.0 (Port 8082)
-│   ├── order-service/                      # Java 25 / Spring Boot 4.0 (Port 8083) - Saga Orchestrator
-│   ├── payment-service/                    # Java 25 / Spring Boot 4.0 (Port 8084)
-│   └── inventory-service/                  # C# / ASP.NET Core 10 LTS (Port 5050)
-│
-├── cpp-core/                               # C++20 DSA Native Algorithm Kernel
-│   ├── include/                            # Header-only interval union & graph logic
-│   └── src/                                # Daemon CLI & performance benchmarks
-│
-├── analysis-engine/                        # Root Cause Analysis Platform (Port 5000)
-│   └── src/                                # Telemetry ingestion, DAG analysis & MongoDB persistence
-│
-├── dashboard/                              # React + Vite + Tailwind CSS Dashboard (Port 3000)
-│   └── src/                                # Interactive DAG, Gantt waterfalls & RCA evidence cards
-│
-├── observability/                          # Native Windows Observability Stack
-│   ├── otel-collector-config.yaml          # OpenTelemetry Collector routing
-│   ├── prometheus.yml                      # Metrics scraping rules
-│   └── tempo.yaml                          # Distributed trace storage configuration
-│
-└── simulation/                             # Chaos Engineering & Evaluation Harness
-    └── scenarios/                          # Controlled fault injection (latency, 503, timeouts)
-```
+
+Then rerun the analysis-engine tests and compare self-times against the JS fallback.
 
 ---
 
-## Development Roadmap
+## Remediation status
 
-* [x] **Phase 0**: Architecture Review, CDAC Curriculum Mapping & Toolchain Audit.
-* [x] **Phase 1**: GitHub Setup, Project Foundation & Repository Structure.
-* [ ] **Phase 2**: Database Schema Design & Inter-Service API Contracts.
-* [ ] **Phase 3**: Microservices Implementation (Spring Boot & ASP.NET Core 10).
-* [ ] **Phase 4**: Inter-Service Communication & Saga Orchestration.
-* [ ] **Phase 5**: OpenTelemetry Instrumentation & Distributed Tracing.
-* [ ] **Phase 6**: Observability Infrastructure (Collector, Tempo, Prometheus).
-* [ ] **Phase 7**: C++20 Core & DSA Algorithm Engine.
-* [ ] **Phase 8**: Root Cause Analysis Engine & Baseline Persistence.
-* [ ] **Phase 9**: React Observability Dashboard.
-* [ ] **Phase 10**: Chaos Simulation, Precision/Recall Benchmarks & Documentation.
+The audit baseline was commit `a10bf0ba238ccc038901f9c772c3958b956fa015`. Findings and
+their final status live in [`AUDIT_REPORT.md`](AUDIT_REPORT.md). Summary:
+
+| Severity | Count | Fixed and verified | Blocked |
+|---|---:|---:|---:|
+| Critical | 4 | 4 | 0 |
+| High | 15 | 15 | 0 |
+| Medium | 11 | 11 | 0 |
+| Low | 4 | 3 | 1 (L-04) |
+| **Total** | **34** | **33** | **1** |
+
+Verification evidence includes `build-all.ps1`, `test-all.ps1` (seven isolated
+suites with live databases `UNCHANGED`), `verify-observability.ps1`, and
+`demo-checkout-rca.ps1` (60/60 checks against the live stack). The demo's real
+checkout trace was `4bdd7f97948770cc004dbefe10a04bed`, with spans from
+`order-service`, `payment-service`, and `product-service`; the corresponding RCA
+incident persisted as `inc-4bdd7f979487`. The live graph produced 5 nodes and 2 real
+edges with `failedTraceCount=0` and `degraded=false`.
 
 ---
 
-## Author & Project Metadata
+## Known limitations
 
-* **Author**: Prathamesh Jadhav
-* **Email**: `Prathamesh.jadhav.office@gmail.com`
-* **GitHub Repository**: [Prathamesh-Jadhav04/CausalOTel](https://github.com/Prathamesh-Jadhav04/CausalOTel)
+- **Local demo only.** SQLite databases, local processes, no TLS, no horizontal
+  scaling, no secrets manager, no production deployment manifests.
+- **Payment is simulated.** No real transactions are performed.
+- **Native C++ path is unverified** in this environment (see L-04).
+- **Inventory does not emit OTLP spans.** It is visible to Prometheus and the health
+  probe but not as a traced service in Tempo.
+- **The dashboard is an operator demo**, not a hardened multi-tenant console.
+- **Historical rows may exist** in a long-lived local database from earlier runs;
+  they are not fixtures.
+
+---
+
+## Documentation
+
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — runtime topology, data model, saga, RCA pipeline.
+- [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) — runbook, test baseline, capability status.
+- [`AUDIT_REPORT.md`](AUDIT_REPORT.md) — the original 34 findings and final remediation status.
+
+## License
+
+See the repository for license information.
