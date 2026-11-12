@@ -299,6 +299,10 @@ edges with `failedTraceCount=0` and `degraded=false`.
 - **The dashboard is an operator demo**, not a hardened multi-tenant console.
 - **Historical rows may exist** in a long-lived local database from earlier runs;
   they are not fixtures.
+- **NuGet warnings remain** for three inventory-service dependencies
+  (`OpenTelemetry.Exporter.OpenTelemetryProtocol 1.11.2`,
+  `System.Security.Cryptography.Pkcs 9.0.0`, `SQLitePCLRaw.lib.e_sqlite3 2.1.11`).
+  They are outside the 34 audit findings and were not upgraded in this pass.
 
 ---
 

@@ -1359,7 +1359,8 @@ labels used here are:
 | Isolated master test run | `scripts\test-all.ps1` | PASS — 7/7 suites; live SQLite databases and `spool/incidents` fingerprinted `UNCHANGED` |
 | Real telemetry smoke test | `scripts\verify-observability.ps1` | PASS — OTLP span accepted, stored by Tempo, served by analysis-engine with `synthetic=false`; all 7 Prometheus targets `UP` |
 | Authenticated checkout/fault/recovery/RCA demo | `scripts\demo-checkout-rca.ps1` | PASS — 60/60 checks; real checkout trace `4bdd7f97948770cc004dbefe10a04bed` with `order-service`, `payment-service`, and `product-service` spans; incident `inc-4bdd7f979487` persisted |
-| Live graph | `GET /api/analysis/graph?window=15m&limit=20` | PASS — `source: tempo`; 20 real traces, 5 nodes, 2 edges (`order-service → payment-service` ×5, `order-service → product-service` ×3); `failedTraceCount=0`, `degraded=false`; maintenance roots excluded by `rootName` TraceQL and defensive filtering |
+| Live graph | `GET /api/analysis/graph?window=15m&limit=20` | PASS — `source: tempo`; 20 real traces, 2 real edges (`order-service → payment-service` ×5, `order-service → product-service` ×3); `failedTraceCount=0`, `degraded=false`; maintenance roots excluded by `rootName` TraceQL and defensive filtering. The 5 nodes are the 4 business services plus the short-lived `causalotel-smoke` verification client, shown honestly as `UNKNOWN` health. |
+| Residual non-audit warnings | `dotnet test` (inventory) | PASS 21/21, but NuGet reports `NU1902`/`NU1903` for `OpenTelemetry.Exporter.OpenTelemetryProtocol 1.11.2`, `System.Security.Cryptography.Pkcs 9.0.0`, and `SQLitePCLRaw.lib.e_sqlite3 2.1.11`. These are outside the 34 audit findings and were not remediated in this pass. |
 | Payment simulation safety | payment suite | PASS — simulation disabled by default; 503 guards; profile-gated startup |
 | Native C++ core | `build-all.ps1` | **BLOCKED** — no CMake/compiler; JS fallback active and tested |
 

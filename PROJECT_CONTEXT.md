@@ -194,10 +194,11 @@ SQLite files open and write to them continuously.
 | Real trace flow | Trace `4bdd7f97948770cc004dbefe10a04bed` stored in Tempo; root `order-service http post /api/orders/checkout`; spans from `order-service`, `payment-service`, `product-service` |
 | RCA incident | `POST /api/analysis/analyze-trace` returned `persisted: true`; incident `inc-4bdd7f979487` readable and references the real trace |
 | Metrics API | `source: prometheus`; real service metrics for all six metric-emitting services |
-| Graph API | `source: tempo`; 20 traces, 5 nodes, 2 real edges; `failedTraceCount=0`, `degraded=false`; window/cache/health metadata |
+| Graph API | `source: tempo`; 20 traces, 2 real edges; `failedTraceCount=0`, `degraded=false`; window/cache/health metadata. The 5 nodes are the 4 business services plus the short-lived `causalotel-smoke` verification client (`UNKNOWN` health). |
 | Checkout demo | `demo-checkout-rca.ps1` 60/60 checks; fault 504, `PENDING_RECONCILIATION`, `RECONCILIATION_REQUIRED`, `RECONCILE_PAYMENT` pending, inventory preserved, reconcile to `CONFIRMED` |
 | Payment safety | Simulation disabled by default; explicit demo/test profile required; `503` when disabled |
 | Test isolation | 7/7 suites PASS; live DBs and spool `UNCHANGED` |
+| Residual non-audit warnings | Inventory `dotnet test` passes 21/21 with NuGet `NU1902`/`NU1903` warnings for `OpenTelemetry.Exporter.OpenTelemetryProtocol 1.11.2`, `System.Security.Cryptography.Pkcs 9.0.0`, and `SQLitePCLRaw.lib.e_sqlite3 2.1.11`; outside the 34 findings and not remediated in this pass. |
 
 ## 9. Capability status
 
