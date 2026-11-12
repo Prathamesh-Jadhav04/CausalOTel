@@ -26,7 +26,8 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/actuator/health/**", "/actuator/health", "/actuator/info",
+                        .requestMatchers("/health", "/health/**",
+                                "/actuator/health/**", "/actuator/health", "/actuator/info",
                                 "/actuator/prometheus", "/actuator/metrics/**", "/error").permitAll()
                         .requestMatchers("/api/payments/fault").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/payments/charge").hasAnyRole("SERVICE", "ADMIN")

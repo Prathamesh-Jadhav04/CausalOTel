@@ -14,6 +14,38 @@ import { nativeCoreStatus } from './native_core.js';
 const app = express();
 const port = parseInt(process.env.PORT, 10) || 5000;
 const allowDemoFixtures = process.env.ALLOW_DEMO_FIXTURES === 'true' && process.env.NODE_ENV !== 'production';
+const MAX_TRACE_FILTER_LENGTH = 200;
+
+export function escapeTraceQlString(value) {
+    return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/**
+ * Build a TraceQL filter for the trace list. `operation` matches the root
+ * span name exactly; `service` matches any span emitted by that service.
+ * Without a filter Tempo returns whatever is newest, which in a live mesh is
+ * mostly scheduled maintenance and actuator scrapes.
+ */
+export function buildTraceSearchQuery({ service, operation } = {}) {
+    const clauses = [];
+
+    const add = (field, raw) => {
+        if (raw === undefined || raw === null) return;
+        const value = String(raw).trim();
+        if (value.length === 0) return;
+        if (value.length > MAX_TRACE_FILTER_LENGTH) {
+            const err = new Error(`Trace filter must be at most ${MAX_TRACE_FILTER_LENGTH} characters`);
+            err.status = 400;
+            err.code = 'INVALID_TRACE_FILTER';
+            throw err;
+        }
+        clauses.push(`${field} = "${escapeTraceQlString(value)}"`);
+    };
+
+    add('resource.service.name', service);
+    add('rootName', operation);
+    return clauses.length > 0 ? `{ ${clauses.join(' && ')} }` : null;
+}
 
 export const incidentSpool = new IncidentSpool();
 export const tempoClient = new TempoClient();
@@ -131,13 +163,24 @@ app.get('/api/analysis/incidents/:id', async (req, res, next) => {
     }
 });
 
-// List recent traces from Tempo (never fabricated)
+// List recent traces from Tempo (never fabricated). Optional `service` and
+// `operation` filters are pushed into TraceQL so maintenance traffic cannot
+// crowd a specific business trace out of the bounded result set.
 app.get('/api/analysis/traces', async (req, res, next) => {
     try {
-        const traces = await tempoClient.listTraces(req.query.limit);
+        const query = buildTraceSearchQuery({
+            service: req.query.service,
+            operation: req.query.operation
+        });
+        const traces = await tempoClient.listTraces(req.query.limit, query ? { query } : {});
         res.json({
             source: 'tempo',
             generatedAt: new Date().toISOString(),
+            filter: {
+                service: req.query.service || null,
+                operation: req.query.operation || null,
+                query
+            },
             traces
         });
     } catch (err) {
@@ -152,6 +195,7 @@ app.get('/api/analysis/traces/:traceId', async (req, res, next) => {
         const trace = await tempoClient.fetchTrace(req.params.traceId);
         res.json({
             source: 'tempo',
+            synthetic: false,
             traceId: trace.traceId,
             totalSpans: trace.totalSpans,
             spans: trace.spans.map(span => ({

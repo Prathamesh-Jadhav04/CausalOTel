@@ -22,7 +22,8 @@ const {
     incidentStore,
     incidentSpool,
     serviceHealthProbe,
-    topologyService
+    topologyService,
+    buildTraceSearchQuery
 } = await import('../src/server.js');
 const { TempoError } = await import('../src/tempo_client.js');
 const { PrometheusError } = await import('../src/prometheus_client.js');
@@ -332,6 +333,7 @@ describe('Analysis Engine Server & Health Endpoints', () => {
             assert.equal(res.status, 200);
             const body = await res.json();
             assert.equal(body.source, 'tempo');
+            assert.equal(body.synthetic, false, 'real Tempo detail must be explicitly marked non-synthetic');
             assert.equal(body.totalSpans, 2);
             assert.equal(body.spans[1].serviceName, 'payment-service');
             assert.equal(body.spans[1].selfTimeMs, 100);
@@ -340,6 +342,49 @@ describe('Analysis Engine Server & Health Endpoints', () => {
                 'non-telemetry attributes must not be exposed to the dashboard');
         } finally {
             tempoClient.fetchTrace = original;
+        }
+    });
+
+    test('trace filters are escaped into exact TraceQL clauses', () => {
+        assert.equal(
+            buildTraceSearchQuery({ operation: 'http post /api/orders/checkout' }),
+            '{ rootName = "http post /api/orders/checkout" }'
+        );
+        assert.equal(
+            buildTraceSearchQuery({ service: 'order-service', operation: 'a"b\\c' }),
+            '{ resource.service.name = "order-service" && rootName = "a\\"b\\\\c" }'
+        );
+        assert.equal(buildTraceSearchQuery({}), null);
+        assert.throws(
+            () => buildTraceSearchQuery({ operation: 'x'.repeat(201) }),
+            err => err.status === 400 && err.code === 'INVALID_TRACE_FILTER'
+        );
+    });
+
+    test('GET /api/analysis/traces pushes the operation filter into Tempo search', async () => {
+        const original = tempoClient.listTraces;
+        let seenLimit = null;
+        let seenOptions = null;
+        tempoClient.listTraces = async (limit, options) => {
+            seenLimit = limit;
+            seenOptions = options;
+            return [{
+                traceId: 'checkout-trace',
+                rootService: 'order-service',
+                rootOperation: 'http post /api/orders/checkout'
+            }];
+        };
+        try {
+            const operation = encodeURIComponent('http post /api/orders/checkout');
+            const res = await fetch(`${baseUrl}/api/analysis/traces?limit=7&operation=${operation}`);
+            assert.equal(res.status, 200);
+            const body = await res.json();
+            assert.equal(seenLimit, '7');
+            assert.equal(seenOptions.query, '{ rootName = "http post /api/orders/checkout" }');
+            assert.equal(body.filter.operation, 'http post /api/orders/checkout');
+            assert.equal(body.traces[0].traceId, 'checkout-trace');
+        } finally {
+            tempoClient.listTraces = original;
         }
     });
 

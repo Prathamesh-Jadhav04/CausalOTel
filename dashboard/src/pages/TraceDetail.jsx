@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Zap, AlertTriangle, RefreshCw, Layers } from 'lucide-react';
 import api from '../lib/api.js';
 import { describeApiError, normalizeTraceDetail } from '../lib/contracts.js';
+import { rcaDetailPath } from '../lib/routes.js';
 
 export default function TraceDetail() {
   const { traceId } = useParams();
@@ -40,7 +41,7 @@ export default function TraceDetail() {
     try {
       const response = await api.post('/api/analysis/analyze-trace', { traceId });
       if (response.data?.incidentId) {
-        navigate(`/rca/${response.data.incidentId}`);
+        navigate(rcaDetailPath(response.data.incidentId));
       } else {
         setAnalysisError({ detail: 'The analysis engine returned no incidentId.' });
       }

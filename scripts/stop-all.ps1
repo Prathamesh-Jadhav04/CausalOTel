@@ -14,6 +14,9 @@ Write-Host "====================================================" -ForegroundCol
 Write-Host "       CAUSALOTEL: SERVICE MESH SHUTDOWN            " -ForegroundColor Cyan
 Write-Host "====================================================" -ForegroundColor Cyan
 
+# 0. Stop the native observability stack first.
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "stop-observability.ps1")
+
 # 1. Kill recorded PIDs
 if (Test-Path $pidFile) {
     Write-Host "--> Reading recorded PIDs from $pidFile..." -ForegroundColor Yellow
@@ -39,7 +42,7 @@ if (Test-Path $pidFile) {
 }
 
 # 2. Cleanup orphan processes on ports
-$targetPorts = @(8081, 8082, 8083, 8084, 5050, 5000, 3000)
+$targetPorts = @(8081, 8082, 8083, 8084, 5050, 5000, 3000, 4317, 4318, 4320, 8889, 9090, 3200, 13133)
 Write-Host "`n--> Checking for lingering processes on ports: $($targetPorts -join ', ')..." -ForegroundColor Yellow
 
 foreach ($port in $targetPorts) {

@@ -63,11 +63,24 @@ public class AdminBootstrapService {
                 }
             }
 
-            // Check if active bootstrap token already exists
-            try (PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM bootstrap_tokens WHERE id = 1")) {
+            // Check if active bootstrap token already exists. An expired,
+            // unconsumed token (e.g. from a previous run more than 15 minutes
+            // ago) must not permanently block first-admin provisioning.
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "SELECT expires_at, consumed_at FROM bootstrap_tokens WHERE id = 1")) {
                 ResultSet rs = ps.executeQuery();
-                if (rs.next() && rs.getInt(1) > 0) {
-                    return; // Token already provisioned
+                if (rs.next()) {
+                    long now = Instant.now().toEpochMilli();
+                    long expiresAt = rs.getLong("expires_at");
+                    boolean consumed = rs.getObject("consumed_at") != null;
+                    if (consumed || expiresAt > now) {
+                        return; // Active or already consumed; no bootstrap required
+                    }
+                    try (PreparedStatement del = conn.prepareStatement(
+                            "DELETE FROM bootstrap_tokens WHERE id = 1 AND consumed_at IS NULL")) {
+                        del.executeUpdate();
+                    }
+                    log.info("Removed an expired, unconsumed admin bootstrap token; issuing a new one.");
                 }
             }
 

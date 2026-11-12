@@ -183,6 +183,28 @@ class UserBootstrapTest {
     }
 
     @Test
+    @DisplayName("An expired unconsumed token is regenerated on startup")
+    void testExpiredTokenIsRegenerated() throws SQLException {
+        try (Connection conn = dataSource.getConnection()) {
+            conn.createStatement().execute(
+                    "UPDATE bootstrap_tokens SET expires_at = " + (Instant.now().toEpochMilli() - 1000) + " WHERE id = 1");
+        }
+
+        bootstrapService.initializeBootstrapTokenIfNoAdmin();
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT token_hash, expires_at, consumed_at FROM bootstrap_tokens WHERE id = 1")) {
+            ResultSet rs = ps.executeQuery();
+            assertTrue(rs.next(), "a fresh bootstrap token must be issued");
+            assertNotEquals(validTokenHash, rs.getString("token_hash"));
+            assertTrue(rs.getLong("expires_at") > Instant.now().toEpochMilli(),
+                    "regenerated token must be valid in the future");
+            assertNull(rs.getObject("consumed_at"));
+        }
+    }
+
+    @Test
     @DisplayName("Locked token is rejected with 429 Too Many Requests")
     void testLockedToken() throws SQLException {
         try (Connection conn = dataSource.getConnection()) {

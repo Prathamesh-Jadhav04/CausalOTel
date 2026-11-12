@@ -1,264 +1,532 @@
 <#
 .SYNOPSIS
-    CausalOTel - Real Live End-to-End Checkout, Fault Injection, Saga Reconciliation & RCA Demonstration
+    CausalOTel - authenticated checkout, fault injection, saga recovery, and
+    real Tempo/Prometheus RCA demonstration.
+
 .DESCRIPTION
-    1. Verifies all 6 real microservices are running on their actual ports.
-       Stops with a fatal error if any service is down. (Zero simulation).
-    2. Executes a real baseline checkout through the Order Service API.
-    3. Verifies actual persistence of order, saga, payment, and inventory.
-    4. Injects a controlled 504 timeout into Payment Service.
-    5. Executes a real failing checkout and verifies HTTP 504 response,
-       PENDING_RECONCILIATION state, preserved inventory reservation, and persisted outbox task.
-    6. Restores Payment Service to NORMAL mode.
-    7. Executes real reconciliation and verifies final CONFIRMED state across all services.
-    8. Queries actual OpenTelemetry Tempo status and Analysis Engine DAG topology.
-    9. Clearly labels verified live evidence vs unavailable external services with zero fabrication.
+    This script exercises the running native Windows stack end to end:
+      1. Verifies the 7 application services and the observability stack
+         (OTel Collector, Tempo, Prometheus) are reachable. Missing telemetry is
+         a hard failure, not a warning.
+      2. Registers a real user and authenticates a real admin through the
+         user-service. The admin is bootstrapped from the one-time token file
+         when no admin exists; generated credentials are stored outside the
+         repository under %LOCALAPPDATA%\CausalOTel\demo.
+      3. Reads the real product catalog and inventory, then performs an
+         authenticated checkout. Prices are resolved by the order service.
+      4. Injects an admin-only GATEWAY_TIMEOUT into payment-service and performs
+         a second checkout, asserting HTTP 504, PENDING_RECONCILIATION, preserved
+         inventory, and a persisted RECONCILE_PAYMENT outbox task.
+      5. Restores payment-service, reconciles the order, and asserts CONFIRMED.
+      6. Finds the checkout trace in Tempo through the analysis engine, asserts
+         synthetic=false, runs RCA, and verifies the incident was persisted.
+      7. Verifies Prometheus reports every service target as UP.
+
+    Exit codes: 0 = every check passed, 1 = a required check failed or a
+    dependency is unavailable. There is no synthetic-trace fallback.
+
+.PARAMETER AdminUsername
+    Admin username. Defaults to %CAUSALOTEL_DEMO_ADMIN_USERNAME%, the saved demo
+    credentials file, or "demo-admin" on first bootstrap.
+
+.PARAMETER AdminPassword
+    Admin password. Defaults to %CAUSALOTEL_DEMO_ADMIN_PASSWORD%, the saved demo
+    credentials file, or a generated password on first bootstrap.
+
+.PARAMETER AdminEmail
+    Admin email used only during first bootstrap.
+
+.PARAMETER SkipFaultRecovery
+    Run the baseline checkout and telemetry/RCA checks only.
 #>
 
-$ErrorActionPreference = "Stop"
-
-function Compute-Sha256Substring([string]$inputStr, [int]$length = 16) {
-    $sha256 = [System.Security.Cryptography.SHA256]::Create()
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($inputStr)
-    $hash = $sha256.ComputeHash($bytes)
-    $hex = -join ($hash | ForEach-Object { $_.ToString("x2") })
-    return $hex.Substring(0, $length)
-}
-
-Write-Host "==================================================================" -ForegroundColor Cyan
-Write-Host "       CAUSALOTEL: REAL LIVE DISTRIBUTED DEMONSTRATION           " -ForegroundColor Cyan
-Write-Host "==================================================================" -ForegroundColor Cyan
-Write-Host "Timestamp: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n"
-
-# -----------------------------------------------------------------------------------------
-# STEP 1: Verify all 6 real services are running via their actual health endpoints
-# -----------------------------------------------------------------------------------------
-Write-Host "--> [STEP 1] Pre-Flight Health Inspection of Real Microservices..." -ForegroundColor Yellow
-
-$services = @(
-    @{ Name = "User Service";      Port = 8081; HealthUrl = "http://localhost:8081/health/live" },
-    @{ Name = "Product Service";   Port = 8082; HealthUrl = "http://localhost:8082/health/live" },
-    @{ Name = "Order Service";     Port = 8083; HealthUrl = "http://localhost:8083/health/live" },
-    @{ Name = "Payment Service";   Port = 8084; HealthUrl = "http://localhost:8084/health/live" },
-    @{ Name = "Inventory Service"; Port = 5050; HealthUrl = "http://localhost:5050/health/live" },
-    @{ Name = "Analysis Engine";   Port = 5000; HealthUrl = "http://localhost:5000/health/live" }
+param(
+    [string]$AdminUsername = $env:CAUSALOTEL_DEMO_ADMIN_USERNAME,
+    [string]$AdminPassword = $env:CAUSALOTEL_DEMO_ADMIN_PASSWORD,
+    [string]$AdminEmail = $env:CAUSALOTEL_DEMO_ADMIN_EMAIL,
+    [switch]$SkipFaultRecovery
 )
 
-$allLive = $true
-foreach ($svc in $services) {
-    try {
-        $resp = Invoke-RestMethod -Uri $svc.HealthUrl -TimeoutSec 3 -ErrorAction Stop
-        Write-Host "    [HEALTHY] $($svc.Name) on port $($svc.Port) -> status: $($resp.status)" -ForegroundColor Green
-    } catch {
-        Write-Host "    [FATAL] $($svc.Name) on port $($svc.Port) is NOT responding! ($($_.Exception.Message))" -ForegroundColor Red
-        $allLive = $false
+$ErrorActionPreference = "Stop"
+$script:Failures = New-Object System.Collections.Generic.List[string]
+$script:Checks = 0
+
+function Write-Section([string]$title) {
+    Write-Host "`n--> $title" -ForegroundColor Yellow
+}
+
+function Assert-True([bool]$condition, [string]$message) {
+    $script:Checks++
+    if ($condition) {
+        Write-Host "    [PASS] $message" -ForegroundColor Green
+    } else {
+        $script:Failures.Add($message)
+        Write-Host "    [FAIL] $message" -ForegroundColor Red
     }
 }
 
-if (-not $allLive) {
-    Write-Host "`n[FATAL BLOCKER] One or more required microservices are unavailable." -ForegroundColor Red
-    Write-Host "Please start all services first using: .\scripts\start-all.ps1 -KeepAlive" -ForegroundColor Yellow
+function Assert-Equal($expected, $actual, [string]$message) {
+    Assert-True ($expected -eq $actual) "$message (expected=$expected actual=$actual)"
+}
+
+function New-RandomPassword {
+    $bytes = New-Object byte[] 24
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    $rng.GetBytes($bytes)
+    $body = ([Convert]::ToBase64String($bytes) -replace '[^A-Za-z0-9]', '')
+    return ($body + "aA1!")
+}
+
+function Invoke-Api {
+    param(
+        [string]$Method = "GET",
+        [string]$Uri,
+        $Body = $null,
+        [string]$Token = "",
+        [string]$BootstrapToken = ""
+    )
+
+    $headers = @{}
+    if ($Token) { $headers["Authorization"] = "Bearer $Token" }
+    if ($BootstrapToken) { $headers["X-Bootstrap-Token"] = $BootstrapToken }
+
+    $params = @{
+        Uri = $Uri
+        Method = $Method
+        Headers = $headers
+        UseBasicParsing = $true
+        TimeoutSec = 30
+    }
+    if ($null -ne $Body) {
+        $params["ContentType"] = "application/json"
+        $params["Body"] = ($Body | ConvertTo-Json -Depth 10)
+    }
+
+    try {
+        $response = Invoke-WebRequest @params
+        $parsed = $null
+        if ($response.Content) {
+            try { $parsed = $response.Content | ConvertFrom-Json } catch { $parsed = $null }
+        }
+        return [pscustomobject]@{ StatusCode = [int]$response.StatusCode; Body = $parsed; Raw = $response.Content }
+    } catch {
+        $status = 0
+        $raw = $_.Exception.Message
+        if ($_.Exception.Response) {
+            $status = [int]$_.Exception.Response.StatusCode
+            try {
+                $stream = $_.Exception.Response.GetResponseStream()
+                $raw = (New-Object System.IO.StreamReader($stream)).ReadToEnd()
+            } catch {
+                # Keep the transport message.
+            }
+        }
+        $parsed = $null
+        try { $parsed = $raw | ConvertFrom-Json } catch { $parsed = $null }
+        return [pscustomobject]@{ StatusCode = $status; Body = $parsed; Raw = $raw }
+    }
+}
+
+function Get-ProblemDetail($response) {
+    if ($response.Body -and $response.Body.detail) { return $response.Body.detail }
+    if ($response.Body -and $response.Body.message) { return $response.Body.message }
+    return $response.Raw
+}
+
+Write-Host "==================================================================" -ForegroundColor Cyan
+Write-Host "   CAUSALOTEL: AUTHENTICATED CHECKOUT + FAULT + RCA DEMO         " -ForegroundColor Cyan
+Write-Host "==================================================================" -ForegroundColor Cyan
+Write-Host "Timestamp: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+Write-Host "Mode:      $(if ($SkipFaultRecovery) { 'baseline + telemetry only' } else { 'baseline + fault + recovery + telemetry' })"
+
+# ---------------------------------------------------------------------------
+# STEP 1: Required services and telemetry must be live.
+# ---------------------------------------------------------------------------
+Write-Section "[STEP 1] Pre-flight: application services and telemetry backends"
+
+$services = @(
+    @{ Name = "user-service";      Url = "http://localhost:8081/health/live" },
+    @{ Name = "product-service";   Url = "http://localhost:8082/health/live" },
+    @{ Name = "order-service";     Url = "http://localhost:8083/health/live" },
+    @{ Name = "payment-service";   Url = "http://localhost:8084/health/live" },
+    @{ Name = "inventory-service"; Url = "http://localhost:5050/health/live" },
+    @{ Name = "analysis-engine";   Url = "http://localhost:5000/health/live" },
+    @{ Name = "dashboard";         Url = "http://localhost:3000/" }
+)
+
+foreach ($service in $services) {
+    $response = Invoke-Api -Uri $service.Url
+    Assert-True ($response.StatusCode -eq 200) "$($service.Name) is reachable at $($service.Url)"
+}
+
+$telemetry = @(
+    @{ Name = "OTel Collector"; Url = "http://localhost:13133/" },
+    @{ Name = "Tempo";          Url = "http://localhost:3200/ready" },
+    @{ Name = "Prometheus";     Url = "http://localhost:9090/-/ready" }
+)
+
+$telemetryLive = $true
+foreach ($backend in $telemetry) {
+    $response = Invoke-Api -Uri $backend.Url
+    $ok = $response.StatusCode -ge 200 -and $response.StatusCode -lt 300
+    if (-not $ok) { $telemetryLive = $false }
+    Assert-True $ok "$($backend.Name) is reachable at $($backend.Url)"
+}
+
+if (-not $telemetryLive) {
+    Write-Host "`n[FATAL] Telemetry is unavailable. This demo never falls back to synthetic traces." -ForegroundColor Red
+    Write-Host "Start the stack with: .\scripts\start-all.ps1" -ForegroundColor Yellow
     exit 1
 }
 
-Write-Host "`n[CONFIRMED] All 6 real services are UP and listening on their designated ports.`n" -ForegroundColor Green
+$fatal = $false
+foreach ($failure in $script:Failures) { Write-Host "  - $failure" -ForegroundColor Red; $fatal = $true }
+if ($fatal) {
+    Write-Host "`n[FATAL] Required services are unavailable." -ForegroundColor Red
+    exit 1
+}
 
-# -----------------------------------------------------------------------------------------
-# STEP 2: Execute Real Baseline Checkout through Order Service API
-# -----------------------------------------------------------------------------------------
-Write-Host "--> [STEP 2] Executing Real Baseline Checkout via POST /api/orders/checkout..." -ForegroundColor Yellow
+# ---------------------------------------------------------------------------
+# STEP 2: Real authentication.
+# ---------------------------------------------------------------------------
+Write-Section "[STEP 2] Authenticating a real user and admin"
 
-$baselineIdemKey = "idem-live-baseline-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
-$baselinePayload = @{
-    userId = 1
-    items = @(
-        @{ productId = "PROD-001"; sku = "SKU-LAPTOP-001"; quantity = 1; priceCents = 129999 }
-    )
-    idempotencyKey = $baselineIdemKey
-} | ConvertTo-Json -Depth 5
+$userSuffix = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+$userUsername = "demo-user-$userSuffix"
+$userEmail = "$userUsername@causalotel.local"
+$userPassword = New-RandomPassword
 
-$baselineResp = Invoke-RestMethod -Uri "http://localhost:8083/api/orders/checkout" -Method Post `
-    -ContentType "application/json" -Body $baselinePayload -TimeoutSec 10
+$register = Invoke-Api -Method POST -Uri "http://localhost:8081/api/auth/register" -Body @{
+    username = $userUsername
+    email = $userEmail
+    password = $userPassword
+}
+Assert-Equal 201 $register.StatusCode "user registration returns 201"
+if ($register.StatusCode -ne 201) {
+    Write-Host "    Registration response: $(Get-ProblemDetail $register)" -ForegroundColor Red
+    exit 1
+}
+$userToken = $register.Body.token
+$userId = $register.Body.user.id
+Assert-True (-not [string]::IsNullOrWhiteSpace($userToken)) "user token issued"
+Assert-Equal "ROLE_USER" $register.Body.user.role "registered user receives ROLE_USER"
+Write-Host "    User: $userUsername ($userId)" -ForegroundColor Cyan
 
-Write-Host "    [LIVE HTTP 200 OK] Checkout Completed Successfully!" -ForegroundColor Green
-Write-Host "    Order ID:    $($baselineResp.orderId)" -ForegroundColor Cyan
-Write-Host "    Status:      $($baselineResp.status)" -ForegroundColor Cyan
-Write-Host "    Total Cents: $($baselineResp.totalCents)" -ForegroundColor Cyan
-Write-Host "    Payment ID:  $($baselineResp.paymentId)" -ForegroundColor Cyan
-Write-Host "    Saga ID:     $($baselineResp.sagaId)" -ForegroundColor Cyan
+$credentialFile = Join-Path $env:LOCALAPPDATA "CausalOTel\demo\admin-credentials.json"
+$generatedCredentials = $false
 
-$baselineOrderId = $baselineResp.orderId
+if (-not $AdminUsername -and (Test-Path $credentialFile)) {
+    $saved = Get-Content $credentialFile -Raw | ConvertFrom-Json
+    $AdminUsername = $saved.username
+    $AdminPassword = $saved.password
+    if (-not $AdminEmail) { $AdminEmail = $saved.email }
+}
+if (-not $AdminUsername) {
+    $AdminUsername = "demo-admin"
+    $AdminEmail = "demo-admin@causalotel.local"
+    $AdminPassword = New-RandomPassword
+    $generatedCredentials = $true
+}
+if (-not $AdminEmail) { $AdminEmail = "$AdminUsername@causalotel.local" }
+if (-not $AdminPassword) { $AdminPassword = New-RandomPassword; $generatedCredentials = $true }
 
-# -----------------------------------------------------------------------------------------
-# STEP 3: Verify Actual Persistence of Baseline State Across Microservices
-# -----------------------------------------------------------------------------------------
-Write-Host "`n--> [STEP 3] Verifying Actual Persistence Across Database Stores..." -ForegroundColor Yellow
+$login = Invoke-Api -Method POST -Uri "http://localhost:8081/api/auth/login" -Body @{
+    usernameOrEmail = $AdminUsername
+    password = $AdminPassword
+}
 
-$persistedOrder = Invoke-RestMethod -Uri "http://localhost:8083/api/orders/$baselineOrderId"
-$persistedSaga = Invoke-RestMethod -Uri "http://localhost:8083/api/orders/$baselineOrderId/saga"
-$persistedPayment = Invoke-RestMethod -Uri "http://localhost:8084/api/payments/order/$baselineOrderId"
-$persistedInventory = Invoke-RestMethod -Uri "http://localhost:5050/api/inventory/SKU-LAPTOP-001"
-
-Write-Host "    [Order Service DB]     Order ID: $($persistedOrder.order_id) | Status: $($persistedOrder.status) | Total: $($persistedOrder.total_cents) cents" -ForegroundColor Green
-Write-Host "    [Order Service DB]     Saga ID:  $($persistedSaga.id) | State: $($persistedSaga.current_state)" -ForegroundColor Green
-Write-Host "    [Payment Service DB]   Payment ID: $($persistedPayment.paymentId) | Status: $($persistedPayment.status) | Amount: $($persistedPayment.amountCents) cents" -ForegroundColor Green
-Write-Host "    [Inventory Service DB] SKU: $($persistedInventory.sku) | Available: $($persistedInventory.availableQuantity) | Reserved: $($persistedInventory.reservedQuantity)" -ForegroundColor Green
-
-# -----------------------------------------------------------------------------------------
-# STEP 4: Inject Real Controlled 504 Timeout into Payment Service
-# -----------------------------------------------------------------------------------------
-Write-Host "`n--> [STEP 4] Injecting Real Fault into Payment Service (GATEWAY_TIMEOUT)..." -ForegroundColor Yellow
-
-$faultConfig = @{
-    latencyMs = 0
-    faultMode = "GATEWAY_TIMEOUT"
-    errorMessage = "Simulated downstream payment gateway timeout (504)"
-} | ConvertTo-Json
-
-$faultResp = Invoke-RestMethod -Uri "http://localhost:8084/api/payments/fault" -Method Post `
-    -ContentType "application/json" -Body $faultConfig -TimeoutSec 5
-
-$activeFault = Invoke-RestMethod -Uri "http://localhost:8084/api/payments/fault" -Method Get
-Write-Host "    [FAULT CONFIGURED] Payment Service faultMode is confirmed: $($activeFault.faultMode)" -ForegroundColor Green
-
-# -----------------------------------------------------------------------------------------
-# STEP 5: Execute Real Checkout Under Injected Fault & Verify HTTP 504
-# -----------------------------------------------------------------------------------------
-Write-Host "`n--> [STEP 5] Executing Real Checkout Under Injected 504 Fault..." -ForegroundColor Yellow
-
-$faultIdemKey = "idem-live-fault-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
-$expectedFaultOrderId = "ord-" + (Compute-Sha256Substring $faultIdemKey 16)
-$expectedFaultSagaId  = "saga-" + (Compute-Sha256Substring $faultIdemKey 16)
-
-$failingPayload = @{
-    userId = 1
-    items = @(
-        @{ productId = "PROD-001"; sku = "SKU-LAPTOP-001"; quantity = 1; priceCents = 129999 }
-    )
-    idempotencyKey = $faultIdemKey
-} | ConvertTo-Json -Depth 5
-
-$caughtStatusCode = 0
-$caughtResponseBody = ""
-
-try {
-    $res = Invoke-RestMethod -Uri "http://localhost:8083/api/orders/checkout" -Method Post `
-        -ContentType "application/json" -Body $failingPayload -TimeoutSec 10
-    Write-Host "    [ERROR] Checkout unexpectedly succeeded!" -ForegroundColor Red
-} catch {
-    if ($_.Exception.Response) {
-        $caughtStatusCode = [int]$_.Exception.Response.StatusCode
-        $stream = $_.Exception.Response.GetResponseStream()
-        $reader = New-Object System.IO.StreamReader($stream)
-        $caughtResponseBody = $reader.ReadToEnd()
-    } else {
-        $caughtStatusCode = 504
-        $caughtResponseBody = $_.Exception.Message
+if ($login.StatusCode -ne 200) {
+    $tokenFile = Join-Path $env:LOCALAPPDATA "CausalOTel\security\.bootstrap_admin_token"
+    if (Test-Path $tokenFile) {
+        $bootstrapToken = (Get-Content $tokenFile -Raw).Trim()
+        Write-Host "    No admin login yet; consuming one-time bootstrap token." -ForegroundColor DarkYellow
+        $bootstrap = Invoke-Api -Method POST -Uri "http://localhost:8081/api/users/bootstrap-admin" `
+            -BootstrapToken $bootstrapToken -Body @{
+                username = $AdminUsername
+                email = $AdminEmail
+                password = $AdminPassword
+            }
+        Assert-Equal 201 $bootstrap.StatusCode "admin bootstrap returns 201"
+        if ($bootstrap.StatusCode -ne 201) {
+            Write-Host "    Bootstrap response: $(Get-ProblemDetail $bootstrap)" -ForegroundColor Red
+            exit 1
+        }
+        if ($generatedCredentials) {
+            $credentialDir = Split-Path $credentialFile -Parent
+            if (-not (Test-Path $credentialDir)) { New-Item -ItemType Directory -Path $credentialDir -Force | Out-Null }
+            @{ username = $AdminUsername; password = $AdminPassword; email = $AdminEmail } |
+                ConvertTo-Json | Set-Content -Path $credentialFile -Encoding UTF8
+            Write-Host "    Generated demo admin credentials saved to $credentialFile" -ForegroundColor DarkGray
+        }
+        $login = Invoke-Api -Method POST -Uri "http://localhost:8081/api/auth/login" -Body @{
+            usernameOrEmail = $AdminUsername
+            password = $AdminPassword
+        }
     }
 }
 
-Write-Host "    [LIVE HTTP $caughtStatusCode] Received expected response from Order Service!" -ForegroundColor Green
-Write-Host "    Response Body: $caughtResponseBody" -ForegroundColor Cyan
+Assert-Equal 200 $login.StatusCode "admin login succeeds"
+if ($login.StatusCode -ne 200) {
+    Write-Host "    Login response: $(Get-ProblemDetail $login)" -ForegroundColor Red
+    Write-Host "    Set CAUSALOTEL_DEMO_ADMIN_USERNAME/CAUSALOTEL_DEMO_ADMIN_PASSWORD or reset the local user database to issue a new bootstrap token." -ForegroundColor Yellow
+    exit 1
+}
+$adminToken = $login.Body.token
+Assert-Equal "ROLE_ADMIN" $login.Body.user.role "admin login carries ROLE_ADMIN"
+Write-Host "    Admin: $AdminUsername" -ForegroundColor Cyan
 
-# -----------------------------------------------------------------------------------------
-# STEP 6: Verify Actual Saga State, Preserved Reservation, and Persisted Outbox Task
-# -----------------------------------------------------------------------------------------
-Write-Host "`n--> [STEP 6] Verifying Distributed Resilience Under Fault..." -ForegroundColor Yellow
+# ---------------------------------------------------------------------------
+# STEP 3: Real catalog and inventory selection.
+# ---------------------------------------------------------------------------
+Write-Section "[STEP 3] Selecting a purchasable SKU from the real catalog"
 
-$faultOrder = Invoke-RestMethod -Uri "http://localhost:8083/api/orders/$expectedFaultOrderId"
-$faultSaga = Invoke-RestMethod -Uri "http://localhost:8083/api/orders/$expectedFaultOrderId/saga"
-$faultInv = Invoke-RestMethod -Uri "http://localhost:5050/api/inventory/SKU-LAPTOP-001"
-$outboxTasks = Invoke-RestMethod -Uri "http://localhost:8083/api/orders/outbox"
+$catalogResponse = Invoke-Api -Uri "http://localhost:8082/api/products" -Token $userToken
+Assert-Equal 200 $catalogResponse.StatusCode "catalog requires and accepts the user token"
+if ($catalogResponse.StatusCode -ne 200) {
+    Write-Host "    Catalog response: $(Get-ProblemDetail $catalogResponse)" -ForegroundColor Red
+    exit 1
+}
+$catalog = @($catalogResponse.Body)
+Assert-True ($catalog.Count -gt 0) "catalog returned at least one product"
 
-$reconcileTask = $outboxTasks | Where-Object { $_.payload -like "*$expectedFaultOrderId*" } | Select-Object -First 1
+$selected = $null
+foreach ($product in $catalog) {
+    if ($product.stock_quantity -le 0) { continue }
+    $inventoryResponse = Invoke-Api -Uri "http://localhost:5050/api/inventory/$($product.sku)" -Token $userToken
+    if ($inventoryResponse.StatusCode -eq 200 -and $inventoryResponse.Body.availableQuantity -gt 0) {
+        $selected = [pscustomobject]@{
+            Id = [string]$product.id
+            Sku = [string]$product.sku
+            Name = [string]$product.name
+            PriceCents = [int]$product.price_cents
+            Available = [int]$inventoryResponse.Body.availableQuantity
+        }
+        break
+    }
+}
+Assert-True ($null -ne $selected) "found a catalog SKU with live inventory"
+if ($null -eq $selected) { exit 1 }
+Write-Host "    SKU: $($selected.Sku) | productId: $($selected.Id) | price: $($selected.PriceCents) cents | available: $($selected.Available)" -ForegroundColor Cyan
 
-Write-Host "    [Order State]       Order ID: $($faultOrder.order_id) | Status: $($faultOrder.status)" -ForegroundColor Green
-Write-Host "    [Saga State]        Saga ID:  $($faultSaga.id) | State: $($faultSaga.current_state)" -ForegroundColor Green
-Write-Host "    [Inventory State]   ReservedQuantity: $($faultInv.reservedQuantity) (PRESERVED - Never released blindly!)" -ForegroundColor Green
-Write-Host "    [Outbox Task]       Task ID: $($reconcileTask.id) | Type: $($reconcileTask.task_type) | State: $($reconcileTask.state)" -ForegroundColor Green
+# ---------------------------------------------------------------------------
+# STEP 4: Authenticated baseline checkout and persistence.
+# ---------------------------------------------------------------------------
+Write-Section "[STEP 4] Authenticated baseline checkout"
 
-# -----------------------------------------------------------------------------------------
-# STEP 7: Restore Payment Service to NORMAL Mode
-# -----------------------------------------------------------------------------------------
-Write-Host "`n--> [STEP 7] Restoring Payment Service to NORMAL Mode..." -ForegroundColor Yellow
+$baselineKey = "idem-demo-baseline-$userSuffix"
+$baselinePayload = @{
+    userId = $userId
+    currency = "USD"
+    items = @(@{ productId = $selected.Id; sku = $selected.Sku; quantity = 1 })
+    idempotencyKey = $baselineKey
+}
+$baseline = Invoke-Api -Method POST -Uri "http://localhost:8083/api/orders/checkout" -Token $userToken -Body $baselinePayload
+Assert-Equal 200 $baseline.StatusCode "baseline checkout succeeds"
+if ($baseline.StatusCode -ne 200) {
+    Write-Host "    Checkout response: $(Get-ProblemDetail $baseline)" -ForegroundColor Red
+    exit 1
+}
+$baselineOrderId = $baseline.Body.orderId
+Assert-Equal "CONFIRMED" $baseline.Body.status "baseline order is CONFIRMED"
+Assert-Equal ($selected.PriceCents) $baseline.Body.totalCents "order total equals the server-resolved catalog price"
+Write-Host "    orderId=$baselineOrderId sagaId=$($baseline.Body.sagaId) paymentId=$($baseline.Body.paymentId) total=$($baseline.Body.totalCents)" -ForegroundColor Cyan
 
-$normalConfig = @{
-    latencyMs = 0
-    faultMode = "NORMAL"
-    errorMessage = $null
-} | ConvertTo-Json
+$orderRead = Invoke-Api -Uri "http://localhost:8083/api/orders/$baselineOrderId" -Token $userToken
+$sagaRead = Invoke-Api -Uri "http://localhost:8083/api/orders/$baselineOrderId/saga" -Token $userToken
+# Payment reads are restricted to ROLE_ADMIN/ROLE_SERVICE; a customer token
+# must not be able to enumerate another user's payment records.
+$paymentRead = Invoke-Api -Uri "http://localhost:8084/api/payments/order/$baselineOrderId" -Token $adminToken
+$inventoryRead = Invoke-Api -Uri "http://localhost:5050/api/inventory/$($selected.Sku)" -Token $userToken
 
-Invoke-RestMethod -Uri "http://localhost:8084/api/payments/fault" -Method Post `
-    -ContentType "application/json" -Body $normalConfig -TimeoutSec 5 | Out-Null
+Assert-Equal 200 $orderRead.StatusCode "order is readable from the order database"
+Assert-Equal "CONFIRMED" $orderRead.Body.status "persisted order status is CONFIRMED"
+Assert-Equal 200 $sagaRead.StatusCode "saga is readable from the order database"
+Assert-Equal "COMPLETED" $sagaRead.Body.current_state "persisted saga state is COMPLETED"
+Assert-Equal 200 $paymentRead.StatusCode "payment is readable from the payment database"
+Assert-Equal "CAPTURED" $paymentRead.Body.status "persisted payment status is CAPTURED"
+Assert-Equal 200 $inventoryRead.StatusCode "inventory is readable from the inventory database"
 
-$restoredFault = Invoke-RestMethod -Uri "http://localhost:8084/api/payments/fault" -Method Get
-Write-Host "    [RESTORED] Payment Service faultMode is confirmed: $($restoredFault.faultMode)" -ForegroundColor Green
+# Idempotent replay must return the same order and not charge twice.
+$replay = Invoke-Api -Method POST -Uri "http://localhost:8083/api/orders/checkout" -Token $userToken -Body $baselinePayload
+Assert-Equal 200 $replay.StatusCode "idempotent replay returns 200"
+Assert-Equal $baselineOrderId $replay.Body.orderId "idempotent replay returns the same orderId"
 
-# -----------------------------------------------------------------------------------------
-# STEP 8: Execute Actual Reconciliation & Verify Final State
-# -----------------------------------------------------------------------------------------
-Write-Host "`n--> [STEP 8] Executing Actual Reconciliation for Order $expectedFaultOrderId..." -ForegroundColor Yellow
+if ($SkipFaultRecovery) {
+    Write-Host "`n[SKIP] Fault/recovery steps skipped by request." -ForegroundColor DarkYellow
+} else {
+    # -----------------------------------------------------------------------
+    # STEP 5: Admin-only fault injection and indeterminate checkout.
+    # -----------------------------------------------------------------------
+    Write-Section "[STEP 5] Admin-only payment fault injection"
 
-$reconcileResult = Invoke-RestMethod -Uri "http://localhost:8083/api/orders/$expectedFaultOrderId/reconcile" -Method Post -TimeoutSec 10
-Write-Host "    [RECONCILIATION RESULT] Status: $($reconcileResult.status) | Message: $($reconcileResult.message)" -ForegroundColor Green
+    $faultBody = @{
+        latencyMs = 0
+        faultMode = "GATEWAY_TIMEOUT"
+        errorMessage = "Demo: simulated payment gateway timeout"
+    }
+    $faultSet = Invoke-Api -Method POST -Uri "http://localhost:8084/api/payments/fault" -Token $adminToken -Body $faultBody
+    Assert-Equal 200 $faultSet.StatusCode "admin can set the payment fault"
+    $faultRead = Invoke-Api -Uri "http://localhost:8084/api/payments/fault" -Token $adminToken
+    Assert-Equal "GATEWAY_TIMEOUT" $faultRead.Body.faultMode "payment fault mode is GATEWAY_TIMEOUT"
 
-# Verify final reconciled state
-$finalOrder = Invoke-RestMethod -Uri "http://localhost:8083/api/orders/$expectedFaultOrderId"
-$finalSaga = Invoke-RestMethod -Uri "http://localhost:8083/api/orders/$expectedFaultOrderId/saga"
-$finalPayment = Invoke-RestMethod -Uri "http://localhost:8084/api/payments/order/$expectedFaultOrderId"
-$finalInv = Invoke-RestMethod -Uri "http://localhost:5050/api/inventory/SKU-LAPTOP-001"
+    $faultCheckoutStartMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $faultKey = "idem-demo-fault-$userSuffix"
+    $faultPayload = @{
+        userId = $userId
+        currency = "USD"
+        items = @(@{ productId = $selected.Id; sku = $selected.Sku; quantity = 1 })
+        idempotencyKey = $faultKey
+    }
+    $faultCheckout = Invoke-Api -Method POST -Uri "http://localhost:8083/api/orders/checkout" -Token $userToken -Body $faultPayload
+    Assert-Equal 504 $faultCheckout.StatusCode "checkout under GATEWAY_TIMEOUT returns 504"
+    Write-Host "    Response: $(Get-ProblemDetail $faultCheckout)" -ForegroundColor DarkGray
 
-Write-Host "`n    [FINAL STATE VERIFICATION]" -ForegroundColor Cyan
-Write-Host "    - Order Status:      $($finalOrder.status)" -ForegroundColor Green
-Write-Host "    - Saga State:        $($finalSaga.current_state)" -ForegroundColor Green
-Write-Host "    - Payment Status:    $($finalPayment.status) (Payment ID: $($finalPayment.paymentId))" -ForegroundColor Green
-Write-Host "    - Inventory Commit:  Available: $($finalInv.availableQuantity), Reserved: $($finalInv.reservedQuantity)" -ForegroundColor Green
+    $orders = Invoke-Api -Uri "http://localhost:8083/api/orders" -Token $userToken
+    $faultOrder = @($orders.Body | Where-Object { $_.status -eq "PENDING_RECONCILIATION" }) | Select-Object -First 1
+    Assert-True ($null -ne $faultOrder) "a PENDING_RECONCILIATION order was persisted"
+    if ($null -eq $faultOrder) { exit 1 }
+    $faultOrderId = $faultOrder.order_id
+    $faultSaga = Invoke-Api -Uri "http://localhost:8083/api/orders/$faultOrderId/saga" -Token $userToken
+    $faultInventory = Invoke-Api -Uri "http://localhost:5050/api/inventory/$($selected.Sku)" -Token $userToken
+    $outbox = Invoke-Api -Uri "http://localhost:8083/api/orders/outbox" -Token $adminToken
+    $reconcileTask = @($outbox.Body | Where-Object { $_.task_type -eq "RECONCILE_PAYMENT" -and $_.payload -like "*$faultOrderId*" }) | Select-Object -First 1
 
-# -----------------------------------------------------------------------------------------
-# STEP 9: Query OpenTelemetry Tempo & Analysis Engine
-# -----------------------------------------------------------------------------------------
-Write-Host "`n--> [STEP 9] Querying Observability Stack (Tempo & Analysis Engine)..." -ForegroundColor Yellow
+    Assert-Equal "RECONCILIATION_REQUIRED" $faultSaga.Body.current_state "saga waits in RECONCILIATION_REQUIRED"
+    Assert-Equal 200 $outbox.StatusCode "admin can read the transactional outbox"
+    Assert-True ($null -ne $reconcileTask) "a RECONCILE_PAYMENT outbox task was persisted"
+    if ($reconcileTask) {
+        Assert-Equal "PENDING" $reconcileTask.state "outbox task is PENDING before recovery"
+    }
+    Assert-True ($faultInventory.Body.reservedQuantity -ge 1) "inventory remains reserved while payment is indeterminate"
 
-# Query Tempo
-Write-Host "    --> Checking Grafana Tempo (Port 3200)..." -ForegroundColor DarkGray
-$tempoAvailable = $false
-try {
-    $tempoResp = Invoke-RestMethod -Uri "http://localhost:3200/api/traces" -TimeoutSec 2 -ErrorAction Stop
-    $tempoAvailable = $true
-    Write-Host "    [LIVE TEMPO] Tempo API responded on port 3200." -ForegroundColor Green
-} catch {
-    Write-Host "    [UNAVAILABLE EVIDENCE] Grafana Tempo (port 3200) is NOT active on this host." -ForegroundColor DarkYellow
-    Write-Host "    Reason: Docker / container runtime is not installed on this host environment." -ForegroundColor DarkYellow
-    Write-Host "    OpenTelemetry spans are emitted via OTLP SDK, but centralized query requires a running Tempo daemon." -ForegroundColor DarkGray
+    # -----------------------------------------------------------------------
+    # STEP 6: Restore payment and reconcile.
+    # -----------------------------------------------------------------------
+    Write-Section "[STEP 6] Restoring payment and reconciling the order"
+
+    $restore = Invoke-Api -Method POST -Uri "http://localhost:8084/api/payments/fault" -Token $adminToken -Body @{
+        latencyMs = 0
+        faultMode = "NORMAL"
+        errorMessage = $null
+    }
+    Assert-Equal 200 $restore.StatusCode "admin can restore NORMAL payment mode"
+    $restored = Invoke-Api -Uri "http://localhost:8084/api/payments/fault" -Token $adminToken
+    Assert-Equal "NORMAL" $restored.Body.faultMode "payment fault mode is NORMAL"
+
+    # A 409 means the outbox worker or a recovery pass currently owns the saga
+    # lease. Retry briefly; the checkout path releases its own lease before
+    # returning the 504, so the first attempt normally succeeds.
+    $reconcile = $null
+    for ($attempt = 1; $attempt -le 15; $attempt++) {
+        $reconcile = Invoke-Api -Method POST -Uri "http://localhost:8083/api/orders/$faultOrderId/reconcile" -Token $adminToken
+        if ($reconcile.StatusCode -eq 200) { break }
+        if ($reconcile.StatusCode -ne 409) { break }
+        Start-Sleep -Seconds 2
+    }
+    Assert-Equal 200 $reconcile.StatusCode "admin reconciliation returns 200"
+    if ($reconcile.StatusCode -ne 200) {
+        Write-Host "    Reconcile response: $(Get-ProblemDetail $reconcile)" -ForegroundColor Red
+    }
+    Assert-Equal "CONFIRMED" $reconcile.Body.status "reconciliation confirms the order"
+    $finalOrder = Invoke-Api -Uri "http://localhost:8083/api/orders/$faultOrderId" -Token $userToken
+    $finalSaga = Invoke-Api -Uri "http://localhost:8083/api/orders/$faultOrderId/saga" -Token $userToken
+    $finalPayment = Invoke-Api -Uri "http://localhost:8084/api/payments/order/$faultOrderId" -Token $adminToken
+    Assert-Equal "CONFIRMED" $finalOrder.Body.status "final order status is CONFIRMED"
+    Assert-Equal "COMPLETED" $finalSaga.Body.current_state "final saga state is COMPLETED"
+    Assert-Equal "CAPTURED" $finalPayment.Body.status "final payment status is CAPTURED"
+    Write-Host "    Recovered order: $faultOrderId" -ForegroundColor Cyan
+
+    # -----------------------------------------------------------------------
+    # STEP 7: Tempo trace -> analysis engine RCA.
+    # -----------------------------------------------------------------------
+    Write-Section "[STEP 7] Real Tempo trace and persisted RCA incident"
+
+    $checkoutTrace = $null
+    $checkoutOperation = "http post /api/orders/checkout"
+    $traceFilter = "limit=50&operation=$([uri]::EscapeDataString($checkoutOperation))"
+    for ($attempt = 1; $attempt -le 30; $attempt++) {
+        $traces = Invoke-Api -Uri "http://localhost:5000/api/analysis/traces?$traceFilter"
+        if ($traces.StatusCode -ne 200) {
+            # Older Tempo builds may reject the rootName filter; fall back to a
+            # raw list rather than claiming telemetry that is not there.
+            $traces = Invoke-Api -Uri "http://localhost:5000/api/analysis/traces?limit=100"
+        }
+        if ($traces.StatusCode -eq 200) {
+            foreach ($trace in @($traces.Body.traces)) {
+                if (-not $trace.rootOperation -or $trace.rootOperation -notmatch "checkout") { continue }
+                $traceStartMs = [double]$trace.startTimeUnixNano / 1000000.0
+                if ($traceStartMs -ge ($faultCheckoutStartMs - 5000)) {
+                    $checkoutTrace = $trace
+                    break
+                }
+            }
+        }
+        if ($checkoutTrace) { break }
+        Start-Sleep -Seconds 2
+    }
+
+    Assert-True ($null -ne $checkoutTrace) "Tempo stored the checkout trace"
+    if ($null -eq $checkoutTrace) {
+        Write-Host "    No checkout trace appeared in Tempo within 60 seconds." -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "    traceId=$($checkoutTrace.traceId) root=$($checkoutTrace.rootService) $($checkoutTrace.rootOperation)" -ForegroundColor Cyan
+
+    $traceDetail = Invoke-Api -Uri "http://localhost:5000/api/analysis/traces/$($checkoutTrace.traceId)"
+    Assert-Equal 200 $traceDetail.StatusCode "analysis engine returns trace detail"
+    Assert-Equal $false $traceDetail.Body.synthetic "trace detail is explicitly synthetic=false"
+    Assert-True (@($traceDetail.Body.spans).Count -ge 2) "trace detail contains real spans"
+    $serviceNames = @($traceDetail.Body.spans | ForEach-Object { $_.serviceName } | Sort-Object -Unique)
+    Assert-True ($serviceNames -contains "order-service") "trace includes order-service spans"
+    Assert-True ($serviceNames -contains "payment-service") "trace includes payment-service spans"
+    Write-Host "    Services in trace: $($serviceNames -join ', ')" -ForegroundColor Cyan
+
+    $analysis = Invoke-Api -Method POST -Uri "http://localhost:5000/api/analysis/analyze-trace" -Body @{ traceId = $checkoutTrace.traceId }
+    Assert-Equal 200 $analysis.StatusCode "RCA analysis returns 200"
+    Assert-Equal $true $analysis.Body.persisted "RCA incident was persisted"
+    Assert-True (-not [string]::IsNullOrWhiteSpace($analysis.Body.incidentId)) "RCA returned an incidentId"
+    if ($analysis.Body.incidentId) {
+        $incident = Invoke-Api -Uri "http://localhost:5000/api/analysis/incidents/$($analysis.Body.incidentId)"
+        Assert-Equal 200 $incident.StatusCode "persisted incident is readable"
+        Assert-Equal $checkoutTrace.traceId $incident.Body.traceId "incident references the real trace"
+        Write-Host "    incidentId=$($incident.Body.incidentId) culprit=$($incident.Body.culpritService) severity=$($incident.Body.severity) confidence=$($incident.Body.confidenceScore)" -ForegroundColor Cyan
+    }
 }
 
-# Query Analysis Engine
-Write-Host "    --> Querying Analysis Engine (Port 5000)..." -ForegroundColor DarkGray
-$analysisGraph = Invoke-RestMethod -Uri "http://localhost:5000/api/analysis/graph"
-$analysisIncidents = Invoke-RestMethod -Uri "http://localhost:5000/api/analysis/incidents"
+# ---------------------------------------------------------------------------
+# STEP 8: Prometheus target health.
+# ---------------------------------------------------------------------------
+Write-Section "[STEP 8] Prometheus scrape targets"
 
-Write-Host "    [LIVE ANALYSIS ENGINE] Dependency Graph Topology:" -ForegroundColor Green
-Write-Host "      - Graph Nodes ($($analysisGraph.nodes.Count)): $($analysisGraph.nodes.name -join ', ')" -ForegroundColor Cyan
-Write-Host "      - Dependency Edges ($($analysisGraph.edges.Count)): $(($analysisGraph.edges | ForEach-Object { "$($_.from) -> $($_.to)" }) -join '; ')" -ForegroundColor Cyan
-Write-Host "      - Tarjan SCC Has Cycle: $($analysisGraph.hasCycle) (Verified Directed Acyclic Graph)" -ForegroundColor Cyan
-Write-Host "      - Incident Store Records: $($analysisIncidents.Count) incident(s)" -ForegroundColor Cyan
+$prometheus = Invoke-Api -Uri "http://localhost:9090/api/v1/query?query=up"
+Assert-Equal 200 $prometheus.StatusCode "Prometheus query API returns 200"
+$targets = @($prometheus.Body.data.result)
+Assert-True ($targets.Count -ge 7) "Prometheus reports at least 7 scrape targets"
+$downTargets = @($targets | Where-Object { $_._value -ne "1" -and $_.value[1] -ne "1" })
+Assert-Equal 0 $downTargets.Count "every Prometheus scrape target is UP"
+foreach ($target in $targets) {
+    Write-Host ("    {0,-20} {1}" -f $target.metric.job, $target.value[1]) -ForegroundColor DarkGray
+}
 
-# -----------------------------------------------------------------------------------------
-# STEP 10: Executive Verification Summary
-# -----------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
 Write-Host "`n==================================================================" -ForegroundColor Magenta
-Write-Host "           CAUSALOTEL LIVE DEMONSTRATION SUMMARY                 " -ForegroundColor Magenta
+Write-Host "                     DEMO SUMMARY                                " -ForegroundColor Magenta
 Write-Host "==================================================================" -ForegroundColor Magenta
-Write-Host "  1. Live Microservices Health:      VERIFIED (All 6 services UP)" -ForegroundColor Green
-Write-Host "  2. Baseline Checkout Saga:         VERIFIED ($baselineOrderId CONFIRMED)" -ForegroundColor Green
-Write-Host "  3. Database ACID Persistence:      VERIFIED (Order, Saga, Payment, Stock)" -ForegroundColor Green
-Write-Host "  4. Real 504 Fault Injection:       VERIFIED (GATEWAY_TIMEOUT active)" -ForegroundColor Green
-Write-Host "  5. Indeterminate Outcome Handling: VERIFIED (HTTP 504 caught)" -ForegroundColor Green
-Write-Host "  6. Inventory Reservation Guard:    VERIFIED (Stock reserved, NOT released)" -ForegroundColor Green
-Write-Host "  7. Transactional Outbox Task:      VERIFIED (RECONCILE_PAYMENT persisted)" -ForegroundColor Green
-Write-Host "  8. Fault Restoration:              VERIFIED (Returned to NORMAL)" -ForegroundColor Green
-Write-Host "  9. End-to-End Reconciliation:      VERIFIED (Final state: CONFIRMED)" -ForegroundColor Green
-Write-Host " 10. Analysis Engine DAG Topology:   VERIFIED (Tarjan SCC acyclic: $($analysisGraph.hasCycle))" -ForegroundColor Green
-Write-Host " 11. Tempo Trace Store (Port 3200):  LABELED UNAVAILABLE (Docker host dependency)" -ForegroundColor DarkYellow
-Write-Host "==================================================================" -ForegroundColor Magenta
-Write-Host "`n[DEMO COMPLETE] Real live operational demonstration finished successfully with 0 fabrications!" -ForegroundColor Green
+Write-Host "  Checks passed: $($script:Checks - $script:Failures.Count) / $($script:Checks)" -ForegroundColor Green
+Write-Host "  User:          $userUsername" -ForegroundColor Cyan
+Write-Host "  Admin:         $AdminUsername" -ForegroundColor Cyan
+Write-Host "  Tempo:         live (synthetic=false enforced)" -ForegroundColor Green
+Write-Host "  Prometheus:    live" -ForegroundColor Green
+
+if ($script:Failures.Count -gt 0) {
+    Write-Host "`nDEMO FAILED: $($script:Failures.Count) check(s) failed." -ForegroundColor Red
+    foreach ($failure in $script:Failures) {
+        Write-Host "  - $failure" -ForegroundColor Red
+    }
+    exit 1
+}
+
+Write-Host "`n[DEMO COMPLETE] All checks passed against the real stack. No fabricated telemetry." -ForegroundColor Green
+exit 0

@@ -146,6 +146,53 @@ describe('Tempo client error contract', () => {
     }
   });
 
+  test('base64 Tempo IDs are normalized to hex so trace routes stay stable', async () => {
+    const traceIdHex = 'a'.repeat(32);
+    const spanIdHex = '1111111111111111';
+    const childSpanIdHex = '2222222222222222';
+    const fixture = {
+      batches: [
+        {
+          resource: { attributes: [{ key: 'service.name', value: { stringValue: 'order-service' } }] },
+          scopeSpans: [{ spans: [{
+            traceId: Buffer.from(traceIdHex, 'hex').toString('base64'),
+            spanId: Buffer.from(spanIdHex, 'hex').toString('base64'),
+            name: 'POST /api/orders/checkout',
+            startTimeUnixNano: nano(1_700_000_000_000),
+            endTimeUnixNano: nano(1_700_000_000_100),
+            status: { code: 0 }
+          }] }]
+        },
+        {
+          resource: { attributes: [{ key: 'service.name', value: { stringValue: 'payment-service' } }] },
+          scopeSpans: [{ spans: [{
+            traceId: Buffer.from(traceIdHex, 'hex').toString('base64'),
+            spanId: Buffer.from(childSpanIdHex, 'hex').toString('base64'),
+            parentSpanId: Buffer.from(spanIdHex, 'hex').toString('base64'),
+            name: 'POST /api/payments/charge',
+            startTimeUnixNano: nano(1_700_000_000_010),
+            endTimeUnixNano: nano(1_700_000_000_090),
+            status: { code: 0 }
+          }] }]
+        }
+      ]
+    };
+
+    const { server, url } = await listen((req, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(fixture));
+    });
+
+    try {
+      const trace = await new TempoClient(url).fetchTrace(traceIdHex);
+      assert.equal(trace.traceId, traceIdHex);
+      assert.deepEqual(trace.spans.map(s => s.spanId).sort(), [spanIdHex, childSpanIdHex]);
+      assert.equal(trace.spans.find(s => s.spanId === childSpanIdHex).parentSpanId, spanIdHex);
+    } finally {
+      await close(server);
+    }
+  });
+
   test('Tempo 404 is a typed 404, not a synthetic trace', async () => {
     const { server, url } = await listen((req, res) => {
       res.statusCode = 404;

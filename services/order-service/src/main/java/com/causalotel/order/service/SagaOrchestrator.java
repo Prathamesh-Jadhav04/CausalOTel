@@ -393,6 +393,13 @@ public class SagaOrchestrator {
         } catch (SQLException e) {
             throw new SagaPersistenceException("Failed to persist checkout failure state", e);
         }
+
+        // The checkout thread is finished with this saga once the failure is
+        // durable. Release the lease immediately so an operator reconcile call
+        // or the outbox worker can make progress without waiting 30 seconds for
+        // the lease to expire. Without this, a GATEWAY_TIMEOUT checkout leaves
+        // the order unreconcilable until the lease timeout elapses.
+        releaseSagaLease(sagaId, owner);
     }
 
     private void finalizeConfirmed(String orderId, String sagaId, String owner,

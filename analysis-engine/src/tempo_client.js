@@ -21,6 +21,30 @@ export class TempoError extends Error {
 
 const TRACE_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 
+/**
+ * Tempo's protobuf JSON encoding returns trace/span IDs as base64 while its
+ * search API returns hex. Normalize every ID to lowercase hex so the trace
+ * detail, waterfall, RCA result, and search rows all refer to the same trace.
+ */
+function normalizeOtelId(value, expectedHexLength) {
+  if (typeof value !== 'string' || value.length === 0) {
+    return value || null;
+  }
+  const hexPattern = new RegExp(`^[0-9a-fA-F]{${expectedHexLength}}$`);
+  if (hexPattern.test(value)) {
+    return value.toLowerCase();
+  }
+  try {
+    const decoded = Buffer.from(value, 'base64');
+    if (decoded.length === expectedHexLength / 2) {
+      return decoded.toString('hex');
+    }
+  } catch {
+    // Fall through to the original value; malformed data is reported upstream.
+  }
+  return value;
+}
+
 export function validateTraceId(traceId) {
   if (typeof traceId !== 'string' || traceId.length === 0) {
     throw new TempoError('traceId is required', { status: 400, code: 'INVALID_TRACE_ID' });
@@ -109,6 +133,11 @@ export class TempoClient {
     if (Number.isFinite(options.endMs)) {
       pathname += `&end=${Math.floor(options.endMs / 1000)}`;
     }
+    // TraceQL filtering keeps maintenance traffic (outbox ticks, actuator
+    // scrapes) from crowding real business traces out of a bounded result set.
+    if (typeof options.query === 'string' && options.query.trim().length > 0) {
+      pathname += `&q=${encodeURIComponent(options.query.trim())}`;
+    }
     const data = await this._request(pathname);
     const traces = Array.isArray(data?.traces) ? data.traces : [];
 
@@ -147,9 +176,9 @@ export class TempoClient {
           }
 
           flatSpans.push({
-            traceId: s.traceId,
-            spanId: s.spanId,
-            parentSpanId: s.parentSpanId || null,
+            traceId: normalizeOtelId(s.traceId, 32),
+            spanId: normalizeOtelId(s.spanId, 16),
+            parentSpanId: s.parentSpanId ? normalizeOtelId(s.parentSpanId, 16) : null,
             name: s.name,
             serviceName,
             kind: s.kind || 'SPAN_KIND_INTERNAL',

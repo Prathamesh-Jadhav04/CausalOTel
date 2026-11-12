@@ -7,6 +7,9 @@ import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
 const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318';
 
 const sdk = new NodeSDK({
+    // Without an explicit service name every span is attributed to
+    // "unknown_service:node", which makes the service graph and RCA useless.
+    serviceName: process.env.OTEL_SERVICE_NAME || 'analysis-engine',
     traceExporter: new OTLPTraceExporter({
         url: `${otlpEndpoint}/v1/traces`
     }),

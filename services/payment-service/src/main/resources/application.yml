@@ -30,7 +30,9 @@ spring:
 causalotel:
   payment:
     simulation:
-      enabled: ${PAYMENT_SIMULATION_ENABLED:true}
+      # L-02: fail closed. Simulation must be explicitly enabled by a demo/test
+      # profile; the default deployment cannot simulate financial transactions.
+      enabled: ${PAYMENT_SIMULATION_ENABLED:false}
 
 management:
   endpoints:
@@ -47,6 +49,11 @@ management:
   tracing:
     sampling:
       probability: 1.0
-  otlp:
+  # Spring Boot 4 OTLP tracing properties. The legacy
+  # management.otlp.tracing.* keys are not bound by the new starter.
+  opentelemetry:
     tracing:
-      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}/v1/traces
+      export:
+        otlp:
+          endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}/v1/traces
+          transport: http

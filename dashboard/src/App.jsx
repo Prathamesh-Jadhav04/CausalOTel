@@ -13,7 +13,9 @@ import Metrics from './pages/Metrics';
 import FaultInjection from './pages/FaultInjection';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
+import NotFound from './pages/NotFound';
 import { AuthProvider, useAuth } from './lib/AuthContext.jsx';
+import { NOT_FOUND_ROUTE, ROUTE_PATHS } from './lib/routes.js';
 
 function Shell() {
   const { session } = useAuth();
@@ -30,17 +32,19 @@ function Shell() {
         <main className="flex-1 overflow-y-auto p-8 bg-slate-950">
           <div className="max-w-7xl mx-auto">
             <Routes>
-              <Route path="/" element={<Overview />} />
-              <Route path="/services" element={<Services />} />
-              <Route path="/graph" element={<DependencyGraph />} />
-              <Route path="/traces" element={<Traces />} />
-              <Route path="/traces/:traceId" element={<TraceDetail />} />
-              <Route path="/incidents" element={<Incidents />} />
-              <Route path="/rca" element={<RcaDetail />} />
-              <Route path="/rca/:incidentId" element={<RcaDetail />} />
-              <Route path="/metrics" element={<Metrics />} />
-              <Route path="/fault-injection" element={<FaultInjection />} />
-              <Route path="/settings" element={<Settings />} />
+              <Route path={ROUTE_PATHS.overview} element={<Overview />} />
+              <Route path={ROUTE_PATHS.services} element={<Services />} />
+              <Route path={ROUTE_PATHS.graph} element={<DependencyGraph />} />
+              <Route path={ROUTE_PATHS.traces} element={<Traces />} />
+              <Route path={ROUTE_PATHS.traceDetail} element={<TraceDetail />} />
+              <Route path={ROUTE_PATHS.incidents} element={<Incidents />} />
+              <Route path={ROUTE_PATHS.incidentDetail} element={<RcaDetail />} />
+              <Route path={ROUTE_PATHS.rca} element={<RcaDetail />} />
+              <Route path={ROUTE_PATHS.rcaDetail} element={<RcaDetail />} />
+              <Route path={ROUTE_PATHS.metrics} element={<Metrics />} />
+              <Route path={ROUTE_PATHS.faultInjection} element={<FaultInjection />} />
+              <Route path={ROUTE_PATHS.settings} element={<Settings />} />
+              <Route path={NOT_FOUND_ROUTE} element={<NotFound />} />
             </Routes>
           </div>
         </main>

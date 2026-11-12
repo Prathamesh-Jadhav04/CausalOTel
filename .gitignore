@@ -12,6 +12,8 @@
 *.pfx
 secrets/
 .causalotel.pids
+.causalotel.observability.pids
+tools/
 
 # Node.js / React
 node_modules/

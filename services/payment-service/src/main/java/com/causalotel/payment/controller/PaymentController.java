@@ -44,6 +44,10 @@ public class PaymentController {
     @Value("${causalotel.fault-injection.enabled:true}")
     private boolean faultInjectionEnabled;
 
+    /** L-02: no simulated charge or refund is possible unless explicitly enabled. */
+    @Value("${causalotel.payment.simulation.enabled:false}")
+    private boolean paymentSimulationEnabled;
+
     public PaymentController(DataSource dataSource, PaymentGatewaySimulator gatewaySimulator) {
         this.dataSource = dataSource;
         this.gatewaySimulator = gatewaySimulator;
@@ -152,6 +156,10 @@ public class PaymentController {
 
     @PostMapping("/charge")
     public ResponseEntity<Map<String, Object>> charge(@RequestBody ChargeRequest request) throws Exception {
+        if (!paymentSimulationEnabled) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Payment simulation is disabled; no real gateway is configured");
+        }
         if (request.orderId() == null || request.orderId().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "orderId must not be empty");
         }
@@ -281,6 +289,10 @@ public class PaymentController {
 
     @PostMapping("/refund")
     public ResponseEntity<Map<String, Object>> refund(@RequestBody RefundRequest request) throws Exception {
+        if (!paymentSimulationEnabled) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Payment simulation is disabled; no real gateway is configured");
+        }
         if (request.paymentId() == null || request.paymentId().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "paymentId must not be empty");
         }
@@ -419,6 +431,10 @@ public class PaymentController {
         if (!faultInjectionEnabled) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Fault injection is disabled");
         }
+        if (!paymentSimulationEnabled) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Payment simulation is disabled; fault injection has no effect");
+        }
         if (config == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Fault configuration is required");
         }
@@ -468,6 +484,10 @@ public class PaymentController {
     public ResponseEntity<Map<String, Object>> getFault() {
         if (!faultInjectionEnabled) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Fault injection is disabled");
+        }
+        if (!paymentSimulationEnabled) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Payment simulation is disabled; fault injection has no effect");
         }
         Map<String, Object> resp = new HashMap<>();
         resp.put("latencyMs", gatewaySimulator.getLatencyMs());

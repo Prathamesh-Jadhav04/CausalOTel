@@ -330,7 +330,7 @@ class OrderServiceTest {
 
     @Test
     @DisplayName("Scenario 4: Payment gateway returns 503 -> Enters reconciliation, never releases inventory blindly")
-    void testScenario4_PaymentGatewayReturns503_EntersReconciliation() throws SQLException {
+    void testScenario4_PaymentGatewayReturns503_EntersReconciliation() throws Exception {
         String idemKey = "IDEM-SCENARIO-4-" + UUID.randomUUID();
 
         when(downstreamServiceClient.chargePayment(anyString(), anyInt(), anyString(), anyString()))
@@ -346,14 +346,30 @@ class OrderServiceTest {
 
         verify(downstreamServiceClient, never()).releaseInventory(anyString(), anyString());
 
+        String orderId;
         try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement("SELECT o.status as order_status, s.current_state as saga_state FROM orders o JOIN saga_instances s ON o.order_id = s.order_id WHERE o.user_id = 'user-104'")) {
+             PreparedStatement ps = conn.prepareStatement("SELECT o.order_id, o.status as order_status, s.current_state as saga_state, s.lease_expires_at FROM orders o JOIN saga_instances s ON o.order_id = s.order_id WHERE o.user_id = 'user-104'")) {
             try (ResultSet rs = ps.executeQuery()) {
                 assertTrue(rs.next(), "Order must exist in DB");
+                orderId = rs.getString("order_id");
                 assertEquals("PENDING_RECONCILIATION", rs.getString("order_status"));
                 assertEquals("RECONCILIATION_REQUIRED", rs.getString("saga_state"));
+                assertEquals(0L, rs.getLong("lease_expires_at"),
+                        "the checkout must release its saga lease before returning the timeout");
             }
         }
+
+        // M-11 regression: an operator reconcile immediately after the 504 must
+        // be able to claim the saga instead of waiting 30 seconds for lease
+        // expiry. This failed in the live demo before failCheckout released it.
+        Mockito.doReturn(Map.of("status", "CAPTURED", "paymentId", "pay-reconciled"))
+                .when(downstreamServiceClient)
+                .chargePayment(anyString(), anyInt(), anyString(), anyString());
+        Mockito.doReturn(Map.of("status", "COMMITTED"))
+                .when(downstreamServiceClient)
+                .commitInventory(anyString());
+        ResponseEntity<Map<String, Object>> reconciled = orderController.reconcile(orderId);
+        assertEquals("CONFIRMED", reconciled.getBody().get("status"));
     }
 
     @Test

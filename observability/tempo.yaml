@@ -1,6 +1,16 @@
-# Grafana Tempo Configuration for CausalOTel
+# Grafana Tempo 3.x Configuration for CausalOTel.
+# __DATA_ROOT__ is rendered by scripts/start-observability.ps1 from
+# CAUSALOTEL_DATA_ROOT (default: %LOCALAPPDATA%\CausalOTel). No user-specific
+# absolute path is committed to the repository.
+#
+# Tempo 3.x folds the former ingester/compactor roles into the single binary's
+# live-store and block-builder components; only server, distributor, and
+# storage are required here.
+stream_over_http_enabled: true
+
 server:
   http_listen_port: 3200
+  log_level: info
 
 distributor:
   receivers:
@@ -9,19 +19,13 @@ distributor:
         grpc:
           endpoint: "0.0.0.0:4320"
 
-ingester:
-  trace_idle_period: 10s
-  max_block_bytes: 1_000_000
-  flush_check_period: 10s
-
-compactor:
-  compaction:
-    block_retention: 24h
-
 storage:
   trace:
     backend: local
     local:
-      path: C:/Users/prath/AppData/Local/CausalOTel/tempo-data
+      path: __DATA_ROOT__/observability/tempo-data
     wal:
-      path: C:/Users/prath/AppData/Local/CausalOTel/tempo-wal
+      path: __DATA_ROOT__/observability/tempo-wal
+
+usage_report:
+  reporting_enabled: false

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Layers, ArrowRight, Search, CheckCircle, AlertTriangle, RefreshCw } from 'lucide-react';
 import api from '../lib/api.js';
 import { describeApiError, normalizeTracesResponse } from '../lib/contracts.js';
+import { traceDetailPath } from '../lib/routes.js';
 
 export default function Traces() {
   const navigate = useNavigate();
@@ -128,7 +129,7 @@ export default function Traces() {
                 </td>
                 <td className="py-3.5 px-6 text-right">
                   <button
-                    onClick={() => navigate(`/traces/${trace.traceId}`)}
+                    onClick={() => navigate(traceDetailPath(trace.traceId))}
                     className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-400 hover:text-indigo-300"
                   >
                     Inspect Gantt <ArrowRight className="w-3.5 h-3.5" />

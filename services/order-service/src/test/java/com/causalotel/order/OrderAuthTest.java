@@ -76,7 +76,7 @@ class OrderAuthTest {
         Mockito.reset(downstreamServiceClient);
         when(downstreamServiceClient.getProductBySku(org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(java.util.Optional.of(java.util.Map.of(
-                        "id", 1, "sku", "SKU-001", "price_cents", 5000, "stock_quantity", 100)));
+                        "id", "PROD-001", "sku", "SKU-001", "price_cents", 5000, "stock_quantity", 100)));
 
         userA = UUID.randomUUID().toString();
         userB = UUID.randomUUID().toString();
@@ -84,6 +84,14 @@ class OrderAuthTest {
         orderB = "ord-auth-b-" + UUID.randomUUID().toString().substring(0, 8);
         insertOrder(orderA, userA);
         insertOrder(orderB, userB);
+    }
+
+    @Test
+    @DisplayName("M-09: liveness and metrics endpoints stay public for orchestration")
+    void healthEndpointsArePublic() throws Exception {
+        assertEquals(200, get("/health/live", null).statusCode());
+        assertEquals(200, get("/health/ready", null).statusCode());
+        assertEquals(200, get("/actuator/health", null).statusCode());
     }
 
     @Test

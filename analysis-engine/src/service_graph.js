@@ -14,6 +14,60 @@ import { TempoError } from './tempo_client.js';
 const WINDOW_PATTERN = /^(\d{1,4})(s|m|h)$/;
 const MAX_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MAX_TRACES = 50;
+const DEFAULT_FETCH_CONCURRENCY = 5;
+
+// Scheduled maintenance and scrape endpoints are real spans, but they are not
+// service-to-service dependencies. Feeding them into the topology drowns out
+// the few business traces and produces a misleading edgeless graph.
+const INFRASTRUCTURE_ROOT_PATTERNS = [
+    /^task\s/i,
+    /^http\s+(get|post|put|delete|patch)\s+\/actuator(\/|$)/i,
+    /^http\s+(get|post|put|delete|patch)\s+\/health(\/|$)/i,
+    /^(get|post|put|delete|patch)\s+\/actuator(\/|$)/i,
+    /^(get|post|put|delete|patch)\s+\/health(\/|$)/i
+];
+
+// Tempo 3.x exposes the `rootName` intrinsic, so the same exclusion can run in
+// the search query. Client-side filtering remains as defense in depth.
+export const BUSINESS_ROOT_QUERY =
+    '{ rootName !~ "^(task .*|http (get|post|put|delete|patch) /(actuator|health).*|GET|POST|PUT|DELETE|PATCH)$" }';
+
+export function isInfrastructureTrace(summary) {
+    const operation = summary?.rootOperation;
+    if (typeof operation !== 'string' || operation.length === 0) {
+        return false;
+    }
+    return INFRASTRUCTURE_ROOT_PATTERNS.some(pattern => pattern.test(operation));
+}
+
+/**
+ * Fetch trace details with bounded concurrency. Tempo is a single local
+ * process; firing every detail request at once makes it time out and marks the
+ * graph degraded even though the traces are readable sequentially.
+ */
+export async function mapWithConcurrency(items, concurrency, worker) {
+    const results = new Array(items.length);
+    let nextIndex = 0;
+    const workerCount = Math.max(1, Math.min(concurrency, items.length));
+
+    async function run() {
+        while (true) {
+            const index = nextIndex;
+            nextIndex += 1;
+            if (index >= items.length) {
+                return;
+            }
+            try {
+                results[index] = { status: 'fulfilled', value: await worker(items[index], index) };
+            } catch (reason) {
+                results[index] = { status: 'rejected', reason };
+            }
+        }
+    }
+
+    await Promise.all(Array.from({ length: workerCount }, run));
+    return results;
+}
 
 export function parseWindow(window) {
     if (typeof window !== 'string' || !WINDOW_PATTERN.test(window)) {
@@ -147,8 +201,12 @@ export function buildServiceGraph(traces, options = {}) {
         window: options.window || '15m',
         windowMs: options.windowMs || null,
         limit: options.limit ?? null,
+        searchQuery: options.searchQuery || null,
         traceCount: Array.isArray(traces) ? traces.length : 0,
         listedTraceCount: options.listedTraceCount ?? (Array.isArray(traces) ? traces.length : 0),
+        rawListedTraceCount: options.rawListedTraceCount ?? (Array.isArray(traces) ? traces.length : 0),
+        filteredInfrastructureTraceCount: options.filteredInfrastructureTraceCount || 0,
+        fetchConcurrency: options.fetchConcurrency ?? null,
         failedTraceCount: options.failedTraceCount || 0,
         spanCount,
         errorSpanCount,
@@ -171,6 +229,13 @@ export class ServiceGraphService {
         this.healthProbe = healthProbe || null;
         this.cacheTtlMs = cacheTtlMs
             ?? (parseInt(process.env.GRAPH_CACHE_TTL_MS, 10) || 15_000);
+        this.fetchConcurrency = Math.max(
+            1,
+            Math.min(
+                MAX_TRACES,
+                parseInt(process.env.GRAPH_FETCH_CONCURRENCY, 10) || DEFAULT_FETCH_CONCURRENCY
+            )
+        );
         this.now = now;
         this.cache = new Map();
     }
@@ -201,13 +266,21 @@ export class ServiceGraphService {
 
         const endMs = now;
         const startMs = now - parsedWindow.windowMs;
-        const summaries = await this.tempoClient.listTraces(boundedLimit, { startMs, endMs });
-        const listedTraces = Array.isArray(summaries) ? summaries : [];
+        const summaries = await this.tempoClient.listTraces(boundedLimit, {
+            startMs,
+            endMs,
+            query: BUSINESS_ROOT_QUERY
+        });
+        const rawListedTraces = Array.isArray(summaries) ? summaries : [];
+        const businessTraces = rawListedTraces.filter(summary => !isInfrastructureTrace(summary));
+        const listedTraces = businessTraces.filter(
+            summary => typeof summary?.traceId === 'string' && summary.traceId.length > 0
+        );
 
-        const settled = await Promise.allSettled(
-            listedTraces
-                .filter(summary => typeof summary?.traceId === 'string' && summary.traceId.length > 0)
-                .map(summary => this.tempoClient.fetchTrace(summary.traceId))
+        const settled = await mapWithConcurrency(
+            listedTraces,
+            this.fetchConcurrency,
+            summary => this.tempoClient.fetchTrace(summary.traceId)
         );
 
         const traces = [];
@@ -247,7 +320,11 @@ export class ServiceGraphService {
             window: parsedWindow.label,
             windowMs: parsedWindow.windowMs,
             limit: boundedLimit,
+            searchQuery: BUSINESS_ROOT_QUERY,
             listedTraceCount: listedTraces.length,
+            rawListedTraceCount: rawListedTraces.length,
+            filteredInfrastructureTraceCount: rawListedTraces.length - businessTraces.length,
+            fetchConcurrency: this.fetchConcurrency,
             failedTraceCount,
             health
         });

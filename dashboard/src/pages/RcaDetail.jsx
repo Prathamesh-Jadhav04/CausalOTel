@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import api from '../lib/api.js';
 import { describeApiError, normalizeIncident, normalizeIncidentList } from '../lib/contracts.js';
+import { traceDetailPath } from '../lib/routes.js';
 
 export default function RcaDetail() {
   const { incidentId } = useParams();
@@ -154,7 +155,7 @@ export default function RcaDetail() {
                   )}
                   {data.traceId && (
                     <button
-                      onClick={() => navigate(`/traces/${encodeURIComponent(data.traceId)}`)}
+                      onClick={() => navigate(traceDetailPath(data.traceId))}
                       className="text-xs font-mono text-indigo-400 hover:text-indigo-300 underline"
                     >
                       trace {data.traceId}

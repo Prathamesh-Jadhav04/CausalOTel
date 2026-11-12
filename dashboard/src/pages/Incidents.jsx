@@ -12,6 +12,7 @@ import {
   Database
 } from 'lucide-react';
 import api from '../lib/api.js';
+import { rcaDetailPath } from '../lib/routes.js';
 import { describeApiError, normalizeIncidentList } from '../lib/contracts.js';
 
 export default function Incidents() {
@@ -207,7 +208,7 @@ export default function Incidents() {
 
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => navigate(`/rca/${incident.incidentId}`)}
+                  onClick={() => navigate(rcaDetailPath(incident.incidentId))}
                   className="px-3.5 py-2 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition"
                 >
                   Inspect RCA

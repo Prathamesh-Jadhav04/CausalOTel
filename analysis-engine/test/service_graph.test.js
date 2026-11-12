@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 
 import {
     buildServiceGraph,
+    BUSINESS_ROOT_QUERY,
+    isInfrastructureTrace,
+    mapWithConcurrency,
     parseTraceLimit,
     parseWindow,
     ServiceGraphService
@@ -227,5 +230,70 @@ describe('M-05 ServiceGraphService cache and failure behavior', () => {
         const graph = await service.getGraph({ window: '15m' });
         assert.equal(graph.traceCount, 0);
         assert.deepEqual(graph.edges, []);
+    });
+
+    test('scheduler, actuator, and health roots are excluded from the business topology', async () => {
+        assert.equal(isInfrastructureTrace({ rootOperation: 'task outboxWorker.scheduledOutboxTick' }), true);
+        assert.equal(isInfrastructureTrace({ rootOperation: 'http get /actuator/prometheus' }), true);
+        assert.equal(isInfrastructureTrace({ rootOperation: 'GET /health/ready' }), true);
+        assert.equal(isInfrastructureTrace({ rootOperation: 'http post /api/orders/checkout' }), false);
+        assert.equal(isInfrastructureTrace({ rootOperation: 'POST /api/payments/charge' }), false);
+        assert.equal(isInfrastructureTrace({}), false);
+    });
+
+    test('detail fetches are bounded instead of overwhelming Tempo', async () => {
+        let active = 0;
+        let maxActive = 0;
+        const items = Array.from({ length: 17 }, (_, index) => index);
+
+        const results = await mapWithConcurrency(items, 3, async (item) => {
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+            await new Promise(resolve => setTimeout(resolve, 5));
+            active -= 1;
+            return item * 2;
+        });
+
+        assert.equal(maxActive <= 3, true, `expected concurrency <= 3, observed ${maxActive}`);
+        assert.equal(results.length, items.length);
+        assert.deepEqual(results.map(result => result.value), items.map(item => item * 2));
+    });
+
+    test('a graph request keeps checkout edges while filtering infrastructure noise', async () => {
+        let active = 0;
+        let maxActive = 0;
+        let seenOptions = null;
+        const { service } = serviceWith({
+            listTraces: async (limit, options) => {
+                seenOptions = options;
+                return [
+                    { traceId: 'tick', rootOperation: 'task outboxWorker.scheduledOutboxTick' },
+                    { traceId: 'scrape', rootOperation: 'http get /actuator/prometheus' },
+                    { traceId: 'checkout', rootOperation: 'http post /api/orders/checkout' }
+                ];
+            },
+            fetchTrace: async (traceId) => {
+                active += 1;
+                maxActive = Math.max(maxActive, active);
+                await new Promise(resolve => setTimeout(resolve, 5));
+                active -= 1;
+                return traceFixture(traceId, [
+                    span('root', null, 'order-service'),
+                    span('child', 'root', 'payment-service')
+                ]);
+            }
+        });
+
+        const graph = await service.getGraph({ window: '15m', limit: 10 });
+        assert.equal(seenOptions.query, BUSINESS_ROOT_QUERY);
+        assert.equal(graph.searchQuery, BUSINESS_ROOT_QUERY);
+        assert.equal(graph.rawListedTraceCount, 3);
+        assert.equal(graph.filteredInfrastructureTraceCount, 2);
+        assert.equal(graph.listedTraceCount, 1);
+        assert.equal(graph.traceCount, 1);
+        assert.equal(graph.failedTraceCount, 0);
+        assert.equal(graph.degraded, false);
+        assert.equal(maxActive, 1);
+        assert.deepEqual(graph.edges.map(edge => `${edge.from}->${edge.to}`), ['order-service->payment-service']);
     });
 });

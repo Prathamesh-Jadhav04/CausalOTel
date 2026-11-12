@@ -51,6 +51,14 @@ class PaymentAuthTest {
     }
 
     @Test
+    @DisplayName("M-09: liveness and metrics endpoints stay public for orchestration")
+    void healthEndpointsArePublic() throws Exception {
+        assertEquals(200, get("/health/live", null).statusCode());
+        assertEquals(200, get("/health/ready", null).statusCode());
+        assertEquals(200, get("/actuator/health", null).statusCode());
+    }
+
+    @Test
     @DisplayName("H-02: anonymous payment reads are rejected with 401")
     void anonymousReadsAreRejected() throws Exception {
         assertEquals(401, get("/api/payments", null).statusCode());
