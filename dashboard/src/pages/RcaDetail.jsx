@@ -10,6 +10,7 @@ import {
   Clock,
   Code,
   Cpu,
+  Download,
   GitCommit,
   Layers,
   RefreshCw,
@@ -22,6 +23,7 @@ import {
   Badge,
   Button,
   CardHeader,
+  CopyButton,
   EmptyState,
   ErrorBanner,
   GlassCard,
@@ -81,6 +83,19 @@ export default function RcaDetail() {
   const causalPath = data?.causalPath || [];
   const remediations = data?.remediations || [];
 
+  const downloadJson = () => {
+    if (!data) return;
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `causalotel-${data.incidentId || 'incident'}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-5 lg:space-y-6">
       <button
@@ -103,6 +118,9 @@ export default function RcaDetail() {
         description="Recorded incident detail from real Tempo spans and Prometheus correlation."
         actions={
           <>
+            {data && (
+              <CopyButton compact value={data.incidentId} label="Copy incident ID" />
+            )}
             <IconButton label="Reload incident" onClick={load} disabled={loading}>
               <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
             </IconButton>
@@ -361,8 +379,13 @@ export default function RcaDetail() {
           {showJson && (
             <GlassCard className="p-4 sm:p-5">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/42">Recorded incident JSON</p>
-                <Badge tone="neutral">raw payload</Badge>
+                <p className="font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/46">Recorded incident JSON</p>
+                <div className="flex items-center gap-2">
+                  <CopyButton value={JSON.stringify(data, null, 2)} label="Copy JSON" />
+                  <IconButton label="Download JSON" onClick={downloadJson} className="h-9 w-9">
+                    <Download className="h-3.5 w-3.5" />
+                  </IconButton>
+                </div>
               </div>
               <pre className="mt-3 max-h-[480px] overflow-auto rounded-2xl border border-white/[0.06] bg-black/30 p-4 font-mono text-[10px] leading-relaxed text-emerald-300/80">
                 {JSON.stringify(data, null, 2)}

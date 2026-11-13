@@ -13,6 +13,7 @@ import {
   Badge,
   Button,
   CardHeader,
+  CopyButton,
   EmptyState,
   ErrorBanner,
   GlassCard,
@@ -120,7 +121,7 @@ export default function DependencyGraph() {
               <select
                 value={window}
                 onChange={(event) => setWindow(event.target.value)}
-                className="h-10 appearance-none rounded-xl border border-white/[0.08] bg-white/[0.05] pl-3.5 pr-9 text-[11px] font-medium text-white/74 outline-none transition hover:bg-white/[0.08] focus:border-signal-400/50 focus:ring-4 focus:ring-signal-500/10"
+                className="h-10 appearance-none rounded-full border border-white/[0.1] bg-white/[0.05] pl-3.5 pr-9 text-[11px] font-medium text-white/74 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] outline-none backdrop-blur-xl transition hover:bg-white/[0.08] focus:border-signal-400/50 focus:ring-4 focus:ring-signal-500/10"
                 aria-label="Graph time window"
               >
                 <option value="15m">Last 15 minutes</option>
@@ -356,19 +357,22 @@ export default function DependencyGraph() {
         {selectedNode && (
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
             <div className="glass-inset rounded-2xl p-3">
-              <p className="text-[8px] font-semibold uppercase tracking-[0.16em] text-white/36">Node</p>
-              <p className="mt-1 break-all font-mono text-[11px] font-semibold text-white/84">{selectedNode.id}</p>
+              <p className="font-mono text-[8px] font-medium uppercase tracking-[0.08em] text-white/36">Node</p>
+              <div className="mt-1 flex items-center gap-1.5">
+                <p className="min-w-0 break-all font-mono text-[11px] font-semibold text-white/84">{selectedNode.id}</p>
+                <CopyButton compact value={selectedNode.id} label="Copy node ID" />
+              </div>
             </div>
             <div className="glass-inset rounded-2xl p-3">
-              <p className="text-[8px] font-semibold uppercase tracking-[0.16em] text-white/36">Health</p>
+              <p className="font-mono text-[8px] font-medium uppercase tracking-[0.08em] text-white/36">Health</p>
               <div className="mt-1.5"><StatusBadge status={selectedNode.health?.status || 'UNKNOWN'} /></div>
             </div>
             <div className="glass-inset rounded-2xl p-3">
-              <p className="text-[8px] font-semibold uppercase tracking-[0.16em] text-white/36">Spans</p>
+              <p className="font-mono text-[8px] font-medium uppercase tracking-[0.08em] text-white/36">Spans</p>
               <p className="mt-1 font-mono text-sm font-semibold text-white/84">{selectedNode.spanCount}</p>
             </div>
             <div className="glass-inset rounded-2xl p-3">
-              <p className="text-[8px] font-semibold uppercase tracking-[0.16em] text-white/36">Errors</p>
+              <p className="font-mono text-[8px] font-medium uppercase tracking-[0.08em] text-white/36">Errors</p>
               <p className={cn('mt-1 font-mono text-sm font-semibold', selectedNode.errorCount > 0 ? 'text-rose-300' : 'text-white/84')}>
                 {selectedNode.errorCount}
               </p>

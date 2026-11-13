@@ -11,10 +11,11 @@ import {
   Zap,
   Settings,
   LogOut,
-  ChevronRight
+  ChevronRight,
+  Search
 } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext.jsx';
-import { Badge, BottomSheet, Button, cn } from './ui.jsx';
+import { Badge, BottomSheet, Button, Kbd, cn, modKeyLabel } from './ui.jsx';
 
 const primaryItems = [
   { path: '/', label: 'Overview', icon: Activity },
@@ -41,7 +42,7 @@ function isItemActive(pathname, path) {
   return pathname === path || pathname.startsWith(`${path}/`);
 }
 
-export default function BottomNav() {
+export default function BottomNav({ onOpenCommand }) {
   const { pathname } = useLocation();
   const { session, logout } = useAuth();
   const [moreOpen, setMoreOpen] = useState(false);
@@ -145,6 +146,23 @@ export default function BottomNav() {
         }
       >
         <div className="grid gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setMoreOpen(false);
+              onOpenCommand?.();
+            }}
+            className="flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3.5 text-left transition hover:border-white/12 hover:bg-white/[0.055]"
+          >
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/[0.08] bg-white/[0.04] text-white/54">
+              <Search className="h-[18px] w-[18px]" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-semibold text-white/88">Quick search</p>
+              <p className="mt-0.5 text-[10px] text-white/42">Pages, trace IDs, incidents, actions</p>
+            </div>
+            <Kbd>{modKeyLabel} K</Kbd>
+          </button>
           {moreItems.map((item) => {
             const Icon = item.icon;
             const active = isItemActive(pathname, item.path);

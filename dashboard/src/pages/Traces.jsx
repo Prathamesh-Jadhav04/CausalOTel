@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowRight,
   CheckCircle,
+  Filter,
   Layers,
   RefreshCw,
   Search
@@ -14,6 +15,8 @@ import { traceDetailPath } from '../lib/routes.js';
 import {
   Badge,
   Button,
+  Chip,
+  CopyButton,
   EmptyState,
   ErrorBanner,
   GlassCard,
@@ -28,6 +31,7 @@ import {
 export default function Traces() {
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('ALL');
   const [traces, setTraces] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -51,11 +55,15 @@ export default function Traces() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const filtered = (traces || []).filter(trace =>
-    trace.traceId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    trace.rootOperation.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    trace.rootService.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filtered = (traces || []).filter(trace => {
+    const needle = searchTerm.toLowerCase();
+    const matchesSearch =
+      trace.traceId.toLowerCase().includes(needle) ||
+      trace.rootOperation.toLowerCase().includes(needle) ||
+      trace.rootService.toLowerCase().includes(needle);
+    const matchesStatus = statusFilter === 'ALL' || trace.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
 
   const timestampLabel = (trace) => {
     if (!trace.startTimeUnixNano) {
@@ -95,19 +103,32 @@ export default function Traces() {
       )}
 
       <GlassCard className="p-3 sm:p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <SearchField
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="Search trace ID, endpoint, or service..."
-            className="w-full sm:max-w-md"
-            aria-label="Search traces"
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge tone="signal" dot>LIVE TRACE FEED</Badge>
-            <span className="text-[10px] text-white/42">
-              {filtered.length} of {traces?.length ?? 0} shown
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <SearchField
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Search trace ID, endpoint, or service..."
+              className="w-full sm:max-w-md"
+              aria-label="Search traces"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone="signal" dot>LIVE TRACE FEED</Badge>
+              <span className="text-[10px] text-white/46">
+                {filtered.length} of {traces?.length ?? 0} shown
+              </span>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 border-t border-white/[0.065] pt-3">
+            <span className="mr-1 inline-flex items-center gap-1.5 font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/42">
+              <Filter className="h-3.5 w-3.5" />
+              Status
             </span>
+            {['ALL', 'OK', 'ERROR', 'UNKNOWN'].map((status) => (
+              <Chip key={status} active={statusFilter === status} onClick={() => setStatusFilter(status)}>
+                {status}
+              </Chip>
+            ))}
           </div>
         </div>
       </GlassCard>
@@ -129,10 +150,13 @@ export default function Traces() {
             <tbody className="divide-y divide-white/[0.055]">
               {filtered.map((trace) => (
                 <tr key={trace.traceId} className="group transition hover:bg-white/[0.035]">
-                  <td className="max-w-[180px] truncate px-3 py-3.5 xl:px-5 font-mono text-[11px] font-semibold text-signal-300">
-                    {trace.traceId}
+                  <td className="max-w-[240px] px-3 py-3.5 xl:px-5">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span className="min-w-0 truncate font-mono text-[11px] font-semibold text-signal-300">{trace.traceId}</span>
+                      <CopyButton compact value={trace.traceId} label="Copy trace ID" />
+                    </div>
                   </td>
-                  <td className="max-w-[240px] truncate px-3 py-3.5 xl:px-5 font-medium text-white/80">{trace.rootOperation}</td>
+                  <td className="max-w-[220px] truncate px-3 py-3.5 xl:px-5 font-medium text-white/80">{trace.rootOperation}</td>
                   <td className="px-3 py-3.5 xl:px-5">
                     <Badge>{trace.rootService}</Badge>
                   </td>

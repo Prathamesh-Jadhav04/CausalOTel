@@ -25,6 +25,7 @@ import {
   Badge,
   Button,
   CardHeader,
+  CopyButton,
   GlassCard,
   MetaChip,
   Notice,
@@ -422,10 +423,15 @@ export default function FaultInjection() {
                   <CheckCircle2 className="h-4 w-4" />
                   Checkout saga succeeded
                 </div>
-                <div className="break-all font-mono text-white/70">
-                  Order: {checkoutResult.data.orderId} | Status: {checkoutResult.data.status}
+                <div className="flex flex-wrap items-center gap-1.5 break-all font-mono text-white/70">
+                  <span>Order: {checkoutResult.data.orderId}</span>
+                  <CopyButton compact value={checkoutResult.data.orderId} label="Copy order ID" />
+                  <span>| Status: {checkoutResult.data.status}</span>
                 </div>
-                <div className="break-all font-mono text-white/50">Payment: {checkoutResult.data.paymentId}</div>
+                <div className="flex items-center gap-1.5 break-all font-mono text-white/50">
+                  <span>Payment: {checkoutResult.data.paymentId}</span>
+                  <CopyButton compact value={checkoutResult.data.paymentId} label="Copy payment ID" />
+                </div>
               </div>
             ) : (
               <div className="space-y-3">

@@ -4,6 +4,8 @@ import {
   AlertTriangle,
   BarChart3,
   CheckCircle2,
+  Eye,
+  EyeOff,
   GitFork,
   KeyRound,
   LogIn,
@@ -30,6 +32,34 @@ const FEATURES = [
 
 const inputClass = 'mt-1.5 h-11 w-full rounded-xl border border-white/[0.09] bg-black/30 px-3.5 text-[13px] text-white/90 outline-none transition placeholder:text-white/28 focus:border-signal-400/55 focus:bg-black/40 focus:ring-4 focus:ring-signal-500/10';
 
+function PasswordField({ label, value, onChange, show, onToggle, minLength, maxLength, autoComplete }) {
+  return (
+    <label className="block text-[10px] font-semibold uppercase tracking-[0.12em] text-white/46">
+      {label}
+      <span className="relative block">
+        <input
+          required
+          type={show ? 'text' : 'password'}
+          value={value}
+          onChange={onChange}
+          minLength={minLength}
+          maxLength={maxLength}
+          autoComplete={autoComplete}
+          className={cn(inputClass, 'pr-12')}
+        />
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label={show ? 'Hide password' : 'Show password'}
+          className="absolute right-1.5 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full text-white/38 transition hover:bg-white/[0.08] hover:text-white/80"
+        >
+          {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
+      </span>
+    </label>
+  );
+}
+
 export default function Login() {
   const { login, register, bootstrapAdmin } = useAuth();
   const [tab, setTab] = useState('login');
@@ -43,6 +73,7 @@ export default function Login() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   const update = (field) => (event) => setForm(prev => ({ ...prev, [field]: event.target.value }));
 
@@ -80,7 +111,7 @@ export default function Login() {
             <BrandMark size="lg" />
             <div>
               <p className="text-lg font-semibold tracking-[-0.03em] text-white">CausalOTel</p>
-              <p className="mt-0.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-white/40">Root cause observability</p>
+              <p className="mt-0.5 font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/42">Root cause observability</p>
             </div>
           </div>
 
@@ -96,7 +127,7 @@ export default function Login() {
             {FEATURES.map((feature) => {
               const Icon = feature.icon;
               return (
-                <div key={feature.label} className="rounded-2xl border border-white/[0.07] bg-white/[0.035] p-3.5">
+                <div key={feature.label} className="glass-panel rounded-2xl p-3.5">
                   <span className="grid h-8 w-8 place-items-center rounded-xl border border-white/[0.08] bg-white/[0.04] text-white/56">
                     <Icon className="h-4 w-4" />
                   </span>
@@ -120,7 +151,7 @@ export default function Login() {
             </div>
 
             <div className="mt-5 lg:mt-0">
-              <p className="flex items-center gap-2 text-[9px] font-semibold uppercase tracking-[0.22em] text-white/40">
+              <p className="flex items-center gap-2 font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/42">
                 <ShieldCheck className="h-3 w-3 text-signal-400" />
                 Secure console
               </p>
@@ -144,7 +175,7 @@ export default function Login() {
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => { setTab(item.id); setError(null); setNotice(null); }}
+                    onClick={() => { setTab(item.id); setError(null); setNotice(null); setShowPassword(false); }}
                     aria-pressed={active}
                     className={cn(
                       'flex min-h-10 items-center justify-center gap-1.5 rounded-xl px-1.5 text-[10px] font-semibold transition sm:text-[11px]',
@@ -186,16 +217,14 @@ export default function Login() {
                       className={inputClass}
                     />
                   </label>
-                  <label className="block text-[10px] font-semibold uppercase tracking-[0.12em] text-white/46">
-                    Password
-                    <input
-                      required
-                      type="password"
-                      value={form.password}
-                      onChange={update('password')}
-                      className={inputClass}
-                    />
-                  </label>
+                  <PasswordField
+                    label="Password"
+                    value={form.password}
+                    onChange={update('password')}
+                    show={showPassword}
+                    onToggle={() => setShowPassword(v => !v)}
+                    autoComplete="current-password"
+                  />
                 </>
               )}
 
@@ -222,18 +251,16 @@ export default function Login() {
                       className={inputClass}
                     />
                   </label>
-                  <label className="block text-[10px] font-semibold uppercase tracking-[0.12em] text-white/46">
-                    Password (minimum 8 characters)
-                    <input
-                      required
-                      type="password"
-                      minLength={8}
-                      maxLength={128}
-                      value={form.password}
-                      onChange={update('password')}
-                      className={inputClass}
-                    />
-                  </label>
+                  <PasswordField
+                    label="Password (minimum 8 characters)"
+                    value={form.password}
+                    onChange={update('password')}
+                    show={showPassword}
+                    onToggle={() => setShowPassword(v => !v)}
+                    minLength={8}
+                    maxLength={128}
+                    autoComplete="new-password"
+                  />
                 </>
               )}
 
@@ -274,18 +301,16 @@ export default function Login() {
                       className={inputClass}
                     />
                   </label>
-                  <label className="block text-[10px] font-semibold uppercase tracking-[0.12em] text-white/46">
-                    Admin password (minimum 8 characters)
-                    <input
-                      required
-                      type="password"
-                      minLength={8}
-                      maxLength={128}
-                      value={form.password}
-                      onChange={update('password')}
-                      className={inputClass}
-                    />
-                  </label>
+                  <PasswordField
+                    label="Admin password (minimum 8 characters)"
+                    value={form.password}
+                    onChange={update('password')}
+                    show={showPassword}
+                    onToggle={() => setShowPassword(v => !v)}
+                    minLength={8}
+                    maxLength={128}
+                    autoComplete="new-password"
+                  />
                 </>
               )}
 

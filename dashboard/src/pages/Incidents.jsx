@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Clock,
   Database,
+  Download,
   Filter,
   RefreshCw,
   Server
@@ -16,6 +17,7 @@ import {
   Badge,
   Button,
   Chip,
+  CopyButton,
   EmptyState,
   ErrorBanner,
   GlassCard,
@@ -64,6 +66,18 @@ export default function Incidents() {
     return matchesSearch && matchesStatus;
   });
 
+  const exportIncidents = () => {
+    const blob = new Blob([JSON.stringify(filteredIncidents, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `causalotel-incidents-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-5 lg:space-y-6">
       <PageHeader
@@ -71,10 +85,16 @@ export default function Incidents() {
         title="Causal incidents"
         description="Durable incident records produced by real trace analysis. No seeded or fabricated incidents."
         actions={
-          <Button onClick={load} loading={loading} variant="secondary">
-            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
-            {loading ? 'Refreshing' : 'Refresh incidents'}
-          </Button>
+          <>
+            <Button onClick={exportIncidents} disabled={!filteredIncidents.length} variant="secondary">
+              <Download className="h-4 w-4" />
+              Export JSON
+            </Button>
+            <Button onClick={load} loading={loading} variant="secondary">
+              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+              {loading ? 'Refreshing' : 'Refresh incidents'}
+            </Button>
+          </>
         }
         meta={
           <>
@@ -153,6 +173,7 @@ export default function Incidents() {
                   <div className="min-w-0 flex-1 space-y-2.5">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono text-[12px] font-semibold text-white/90">{incident.incidentId}</span>
+                      <CopyButton compact value={incident.incidentId} label="Copy incident ID" />
                       <StatusBadge status={incident.severity} />
                       <StatusBadge status={incident.status} />
                       {incident.createdAt && (

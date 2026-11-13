@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Activity,
   CheckCircle2,
+  Clock,
   Database,
   RefreshCw,
   Server,
@@ -22,6 +23,7 @@ import {
   Badge,
   Button,
   CardHeader,
+  CopyButton,
   ErrorBanner,
   GlassCard,
   LoadingBlock,
@@ -46,6 +48,7 @@ export default function Overview() {
   const [product, setProduct] = useState(null);
   const [productError, setProductError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [lastLoadedAt, setLastLoadedAt] = useState(null);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutResult, setCheckoutResult] = useState(null);
   const narrow = useMediaQuery('(max-width: 379px)');
@@ -95,6 +98,7 @@ export default function Overview() {
     }
 
     setLoading(false);
+    setLastLoadedAt(new Date());
   };
 
   useEffect(() => {
@@ -176,6 +180,7 @@ export default function Overview() {
           <>
             <MetaChip icon={Activity}>Real-time observability</MetaChip>
             <MetaChip icon={Server}>{health ? `${upCount}/${totalCount} services online` : 'Probing services'}</MetaChip>
+            <MetaChip icon={Clock}>{lastLoadedAt ? `updated ${lastLoadedAt.toLocaleTimeString()}` : 'Awaiting load'}</MetaChip>
           </>
         }
       />
@@ -365,8 +370,14 @@ export default function Overview() {
                 {checkoutResult.success ? (
                   <div className="space-y-1">
                     <span className="block font-semibold">Order {checkoutResult.data.status}</span>
-                    <span className="block break-all font-mono text-[10px] text-emerald-200/65">ID: {checkoutResult.data.orderId}</span>
-                    <span className="block break-all font-mono text-[10px] text-emerald-200/65">Payment: {checkoutResult.data.paymentId}</span>
+                    <span className="flex items-center gap-1.5 break-all font-mono text-[10px] text-emerald-200/65">
+                      ID: {checkoutResult.data.orderId}
+                      <CopyButton compact value={checkoutResult.data.orderId} label="Copy order ID" />
+                    </span>
+                    <span className="flex items-center gap-1.5 break-all font-mono text-[10px] text-emerald-200/65">
+                      Payment: {checkoutResult.data.paymentId}
+                      <CopyButton compact value={checkoutResult.data.paymentId} label="Copy payment ID" />
+                    </span>
                   </div>
                 ) : (
                   <div>

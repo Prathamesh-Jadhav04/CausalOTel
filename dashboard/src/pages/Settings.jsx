@@ -16,6 +16,7 @@ import {
   Badge,
   Button,
   CardHeader,
+  CopyButton,
   ErrorBanner,
   GlassCard,
   MetaChip,
@@ -189,16 +190,25 @@ export default function Settings() {
           />
           <div className="mt-4 space-y-2 font-mono">
             <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3.5">
-              <p className="text-[9px] uppercase tracking-[0.12em] text-white/36">SQLite data directory</p>
-              <p className="mt-1 break-all text-[11px] text-signal-300/80">%LOCALAPPDATA%\CausalOTel\data\</p>
+              <p className="font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/36">SQLite data directory</p>
+              <div className="mt-1 flex items-center gap-2">
+                <p className="min-w-0 break-all text-[11px] text-signal-300/80">%LOCALAPPDATA%\CausalOTel\data\</p>
+                <CopyButton compact value="%LOCALAPPDATA%\\CausalOTel\\data\\" label="Copy SQLite data path" />
+              </div>
             </div>
             <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3.5">
-              <p className="text-[9px] uppercase tracking-[0.12em] text-white/36">Incident spool directory</p>
-              <p className="mt-1 break-all text-[11px] text-signal-300/80">%LOCALAPPDATA%\CausalOTel\spool\incidents\</p>
+              <p className="font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/36">Incident spool directory</p>
+              <div className="mt-1 flex items-center gap-2">
+                <p className="min-w-0 break-all text-[11px] text-signal-300/80">%LOCALAPPDATA%\CausalOTel\spool\incidents\</p>
+                <CopyButton compact value="%LOCALAPPDATA%\\CausalOTel\\spool\\incidents\\" label="Copy incident spool path" />
+              </div>
             </div>
             <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3.5">
-              <p className="text-[9px] uppercase tracking-[0.12em] text-white/36">Tempo data / WAL</p>
-              <p className="mt-1 break-all text-[11px] text-signal-300/80">%LOCALAPPDATA%\CausalOTel\tempo-data\</p>
+              <p className="font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/36">Tempo data / WAL</p>
+              <div className="mt-1 flex items-center gap-2">
+                <p className="min-w-0 break-all text-[11px] text-signal-300/80">%LOCALAPPDATA%\CausalOTel\tempo-data\</p>
+                <CopyButton compact value="%LOCALAPPDATA%\\CausalOTel\\tempo-data\\" label="Copy Tempo data path" />
+              </div>
             </div>
           </div>
         </GlassCard>
@@ -239,11 +249,14 @@ export default function Settings() {
 
               {!nativeCore.available && (
                 <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3.5">
-                  <p className="flex items-center gap-1 text-[9px] uppercase tracking-[0.12em] text-white/36">
+                  <p className="flex items-center gap-1 font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/36">
                     <Terminal className="h-3 w-3" />
                     Build command
                   </p>
-                  <p className="mt-1 break-all text-[11px] text-white/62">{nativeCore.buildCommand}</p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <p className="min-w-0 break-all text-[11px] text-white/62">{nativeCore.buildCommand}</p>
+                    <CopyButton compact value={nativeCore.buildCommand} label="Copy build command" />
+                  </div>
                 </div>
               )}
 

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowUpDown,
   BarChart3,
   Clock,
   Database,
@@ -49,6 +50,8 @@ export default function Metrics() {
   const [metrics, setMetrics] = useState(null);
   const [error, setError] = useState(null);
   const [selectedService, setSelectedService] = useState('ALL');
+  const [sortBy, setSortBy] = useState('name');
+  const [lastLoadedAt, setLastLoadedAt] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const load = async () => {
@@ -62,6 +65,7 @@ export default function Metrics() {
       setError(describeApiError(err));
     } finally {
       setLoading(false);
+      setLastLoadedAt(new Date());
     }
   };
 
@@ -74,6 +78,12 @@ export default function Metrics() {
   const displayedMetrics = selectedService === 'ALL'
     ? services
     : services.filter(service => service.service === selectedService);
+  const sortedMetrics = [...displayedMetrics].sort((a, b) => {
+    if (sortBy === 'p99') return (Number(b.p99LatencyMs) || 0) - (Number(a.p99LatencyMs) || 0);
+    if (sortBy === 'errors') return (Number(b.errorRate) || 0) - (Number(a.errorRate) || 0);
+    if (sortBy === 'traffic') return (Number(b.requestRate) || 0) - (Number(a.requestRate) || 0);
+    return a.service.localeCompare(b.service);
+  });
   const maxP99 = Math.max(
     1,
     ...displayedMetrics
@@ -104,6 +114,7 @@ export default function Metrics() {
             <MetaChip icon={Database}>source: {metrics.source}</MetaChip>
             <MetaChip icon={Clock}>window: {metrics.window || '—'}</MetaChip>
             <MetaChip>{metrics.generatedAt ? new Date(metrics.generatedAt).toLocaleString() : 'not generated'}</MetaChip>
+            {lastLoadedAt && <MetaChip>loaded {lastLoadedAt.toLocaleTimeString()}</MetaChip>}
           </>
         ) : null}
       />
@@ -155,27 +166,39 @@ export default function Metrics() {
 
       {metrics && services.length > 0 && (
         <GlassCard className="p-3.5 sm:p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="mr-1 text-[9px] font-semibold uppercase tracking-[0.16em] text-white/40">Filter service</span>
-            <Chip active={selectedService === 'ALL'} onClick={() => setSelectedService('ALL')}>
-              All services
-            </Chip>
-            {services.map((service) => (
-              <Chip
-                key={service.service}
-                active={selectedService === service.service}
-                onClick={() => setSelectedService(service.service)}
-                className="font-mono"
-              >
-                {service.service}
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="mr-1 font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/42">Filter service</span>
+              <Chip active={selectedService === 'ALL'} onClick={() => setSelectedService('ALL')}>
+                All services
               </Chip>
-            ))}
+              {services.map((service) => (
+                <Chip
+                  key={service.service}
+                  active={selectedService === service.service}
+                  onClick={() => setSelectedService(service.service)}
+                  className="font-mono"
+                >
+                  {service.service}
+                </Chip>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 border-t border-white/[0.065] pt-3">
+              <span className="mr-1 inline-flex items-center gap-1.5 font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/42">
+                <ArrowUpDown className="h-3.5 w-3.5" />
+                Sort
+              </span>
+              <Chip active={sortBy === 'name'} onClick={() => setSortBy('name')}>Name</Chip>
+              <Chip active={sortBy === 'p99'} onClick={() => setSortBy('p99')}>P99 latency</Chip>
+              <Chip active={sortBy === 'errors'} onClick={() => setSortBy('errors')}>Error rate</Chip>
+              <Chip active={sortBy === 'traffic'} onClick={() => setSortBy('traffic')}>Traffic</Chip>
+            </div>
           </div>
         </GlassCard>
       )}
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 lg:gap-4">
-        {displayedMetrics.map((service, index) => (
+        {sortedMetrics.map((service, index) => (
           <GlassCard
             key={service.service}
             interactive

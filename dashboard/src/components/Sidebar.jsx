@@ -9,10 +9,11 @@ import {
   BarChart3,
   Zap,
   Settings,
-  ShieldCheck
+  ShieldCheck,
+  Search
 } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext.jsx';
-import { BrandLockup, cn } from './ui.jsx';
+import { BrandLockup, Kbd, cn, modKeyLabel } from './ui.jsx';
 
 const navGroups = [
   {
@@ -46,7 +47,7 @@ function isItemActive(pathname, path) {
   return pathname === path || pathname.startsWith(`${path}/`);
 }
 
-export default function Sidebar() {
+export default function Sidebar({ onOpenCommand }) {
   const { session } = useAuth();
   const { pathname } = useLocation();
   const roleLabel = session?.role ? session.role.replace('ROLE_', '') : 'VIEWER';
@@ -56,13 +57,24 @@ export default function Sidebar() {
     <aside className="relative z-20 hidden w-[272px] shrink-0 p-3 lg:block xl:w-[292px] xl:p-4">
       <div className="glass-panel-strong flex h-full flex-col overflow-hidden rounded-[28px]">
         <div className="flex items-center px-5 pb-4 pt-5">
-          <BrandLockup subtitleClassName="lg:text-[8px] lg:tracking-[0.1em] xl:text-[9px] xl:tracking-[0.18em]" />
+          <BrandLockup subtitleClassName="lg:text-[8px] lg:tracking-[0.06em] xl:text-[9px] xl:tracking-[0.08em]" />
         </div>
+
+        <button
+          type="button"
+          onClick={onOpenCommand}
+          className="glass-pill mx-3 mb-2 flex h-9 items-center gap-2 rounded-full px-3 text-[11px] font-medium text-white/52 transition hover:text-white/86"
+          aria-label="Open command palette"
+        >
+          <Search className="h-3.5 w-3.5" />
+          <span className="flex-1 text-left">Quick search</span>
+          <Kbd>{modKeyLabel} K</Kbd>
+        </button>
 
         <nav className="flex-1 overflow-y-auto px-3 pb-4" aria-label="Primary navigation">
           {navGroups.map((group) => (
             <div key={group.label} className="mb-5 last:mb-0">
-              <p className="px-3 pb-2 text-[9px] font-semibold uppercase tracking-[0.22em] text-white/32">
+              <p className="px-3 pb-2 font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/34">
                 {group.label}
               </p>
               <div className="space-y-1">

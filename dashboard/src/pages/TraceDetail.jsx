@@ -15,6 +15,7 @@ import {
   BottomSheet,
   Button,
   CardHeader,
+  CopyButton,
   EmptyState,
   ErrorBanner,
   GlassCard,
@@ -88,8 +89,11 @@ export default function TraceDetail() {
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div className="glass-inset rounded-2xl p-3.5">
-          <p className="text-[8px] font-semibold uppercase tracking-[0.16em] text-white/40">Span ID</p>
-          <p className="mt-1 break-all font-mono text-[11px] text-white/78">{selectedSpan.spanId}</p>
+          <p className="font-mono text-[8px] font-medium uppercase tracking-[0.08em] text-white/40">Span ID</p>
+          <div className="mt-1 flex items-center gap-2">
+            <p className="min-w-0 break-all font-mono text-[11px] text-white/78">{selectedSpan.spanId}</p>
+            <CopyButton compact value={selectedSpan.spanId} label="Copy span ID" />
+          </div>
         </div>
         <div className="glass-inset rounded-2xl p-3.5">
           <p className="text-[8px] font-semibold uppercase tracking-[0.16em] text-white/40">Service</p>
@@ -140,6 +144,7 @@ export default function TraceDetail() {
         description="Real Tempo spans with sweep-line interval-union self-time."
         actions={
           <>
+            <CopyButton compact value={traceId} label="Copy trace ID" />
             <IconButton label="Reload trace" onClick={load} disabled={loading}>
               <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
             </IconButton>
