@@ -59,7 +59,7 @@ export default function BottomNav({ onOpenCommand }) {
         className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center px-3 pb-[calc(env(safe-area-inset-bottom)+10px)] lg:hidden"
         aria-label="Primary navigation"
       >
-        <div className="bottom-nav pointer-events-auto grid w-full max-w-md grid-cols-5 gap-0.5 rounded-[26px] p-1.5 sm:max-w-lg">
+        <div className="bottom-nav pointer-events-auto grid w-full max-w-md grid-cols-5 gap-0.5 rounded-2xl p-1.5 sm:max-w-lg">
           {primaryItems.map((item) => {
             const Icon = item.icon;
             const active = isItemActive(pathname, item.path);
@@ -68,14 +68,14 @@ export default function BottomNav({ onOpenCommand }) {
                 key={item.path}
                 to={item.path}
                 aria-current={active ? 'page' : undefined}
-                className="group flex min-h-[54px] min-w-0 flex-col items-center justify-center gap-1 rounded-[20px] px-1 py-1.5 transition active:scale-[0.97]"
+                className="group flex min-h-[54px] min-w-0 flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 transition active:scale-[0.97]"
               >
                 <span
                   className={cn(
                     'grid h-8 w-8 place-items-center rounded-full transition duration-200',
                     active
-                      ? 'bg-white text-ink-950 shadow-[0_0_24px_rgba(255,255,255,0.28)]'
-                      : 'text-white/50 group-hover:bg-white/[0.06] group-hover:text-white/78'
+                      ? 'bg-gradient-to-b from-signal-400 to-signal-600 text-white shadow-[0_0_24px_rgba(94,105,209,0.5)]'
+                      : 'text-ink-subtle group-hover:bg-white/[0.06] group-hover:text-ink'
                   )}
                 >
                   <Icon className="h-[17px] w-[17px]" strokeWidth={active ? 2.3 : 2} />
@@ -83,7 +83,7 @@ export default function BottomNav({ onOpenCommand }) {
                 <span
                   className={cn(
                     'max-w-full truncate text-[10px] font-semibold tracking-[0.02em] transition',
-                    active ? 'text-white' : 'text-white/44'
+                    active ? 'text-ink' : 'text-ink-tertiary'
                   )}
                 >
                   {item.label}
@@ -97,19 +97,19 @@ export default function BottomNav({ onOpenCommand }) {
             onClick={() => setMoreOpen(true)}
             aria-haspopup="dialog"
             aria-expanded={moreOpen}
-            className="group flex min-h-[54px] min-w-0 flex-col items-center justify-center gap-1 rounded-[20px] px-1 py-1.5 transition active:scale-[0.97]"
+            className="group flex min-h-[54px] min-w-0 flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 transition active:scale-[0.97]"
           >
             <span
               className={cn(
                 'grid h-8 w-8 place-items-center rounded-full transition duration-200',
                 moreActive
-                  ? 'bg-gradient-to-b from-signal-400 to-signal-600 text-white shadow-[0_0_22px_rgba(255,45,85,0.55)]'
-                  : 'text-white/50 group-hover:bg-white/[0.06] group-hover:text-white/78'
+                  ? 'bg-gradient-to-b from-signal-400 to-signal-600 text-white shadow-[0_0_22px_rgba(94,105,209,0.5)]'
+                  : 'text-ink-subtle group-hover:bg-white/[0.06] group-hover:text-ink'
               )}
             >
               <Menu className="h-[17px] w-[17px]" strokeWidth={moreActive ? 2.3 : 2} />
             </span>
-            <span className={cn('text-[10px] font-semibold tracking-[0.02em] transition', moreActive ? 'text-white' : 'text-white/44')}>
+            <span className={cn('text-[10px] font-semibold tracking-[0.02em] transition', moreActive ? 'text-ink' : 'text-ink-tertiary')}>
               More
             </span>
           </button>
@@ -123,12 +123,12 @@ export default function BottomNav({ onOpenCommand }) {
         title="More workspace"
         footer={
           <div className="flex items-center gap-3">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/10 bg-gradient-to-br from-signal-500/30 to-white/[0.04] text-xs font-semibold text-white/90">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/10 bg-gradient-to-br from-signal-500/30 to-white/[0.04] text-xs font-semibold text-ink">
               {initial}
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-semibold text-white/84">{session?.username}</p>
-              <p className="mt-0.5 truncate text-[9px] uppercase tracking-[0.12em] text-white/42">{session?.role}</p>
+              <p className="truncate text-xs font-semibold text-ink">{session?.username}</p>
+              <p className="mt-0.5 truncate text-[9px] uppercase tracking-[0.12em] text-ink-tertiary">{session?.role}</p>
             </div>
             <Button
               variant="ghost"
@@ -152,14 +152,14 @@ export default function BottomNav({ onOpenCommand }) {
               setMoreOpen(false);
               onOpenCommand?.();
             }}
-            className="flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3.5 text-left transition hover:border-white/12 hover:bg-white/[0.055]"
+            className="flex items-center gap-3 rounded-xl border border-hairline bg-white/[0.03] p-3.5 text-left transition hover:border-hairline-strong hover:bg-white/[0.055]"
           >
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/[0.08] bg-white/[0.04] text-white/54">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-white/[0.08] bg-white/[0.04] text-ink-subtle">
               <Search className="h-[18px] w-[18px]" />
             </span>
             <div className="min-w-0 flex-1">
-              <p className="text-[13px] font-semibold text-white/88">Quick search</p>
-              <p className="mt-0.5 text-[10px] text-white/42">Pages, trace IDs, incidents, actions</p>
+              <p className="text-[13px] font-semibold text-ink">Quick search</p>
+              <p className="mt-0.5 text-[10px] text-ink-subtle">Pages, trace IDs, incidents, actions</p>
             </div>
             <Kbd>{modKeyLabel} K</Kbd>
           </button>
@@ -172,27 +172,27 @@ export default function BottomNav({ onOpenCommand }) {
                 to={item.path}
                 onClick={() => setMoreOpen(false)}
                 className={cn(
-                  'group flex items-center gap-3 rounded-2xl border p-3.5 transition',
+                  'group flex items-center gap-3 rounded-xl border p-3.5 transition',
                   active
-                    ? 'border-signal-400/20 bg-signal-500/[0.09]'
-                    : 'border-white/[0.07] bg-white/[0.03] hover:border-white/12 hover:bg-white/[0.055]'
+                    ? 'border-signal-400/30 bg-signal-500/[0.12]'
+                    : 'border-hairline bg-white/[0.03] hover:border-hairline-strong hover:bg-white/[0.055]'
                 )}
               >
                 <span
                   className={cn(
-                    'grid h-10 w-10 shrink-0 place-items-center rounded-xl border transition',
+                    'grid h-10 w-10 shrink-0 place-items-center rounded-lg border transition',
                     active
-                      ? 'border-signal-400/25 bg-signal-500/12 text-signal-300'
-                      : 'border-white/[0.08] bg-white/[0.04] text-white/54 group-hover:text-white/74'
+                      ? 'border-signal-400/30 bg-signal-500/15 text-signal-300'
+                      : 'border-white/[0.08] bg-white/[0.04] text-ink-subtle group-hover:text-ink-muted'
                   )}
                 >
                   <Icon className="h-[18px] w-[18px]" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[13px] font-semibold text-white/88">{item.label}</p>
-                  <p className="mt-0.5 text-[10px] text-white/42">{item.hint}</p>
+                  <p className="text-[13px] font-semibold text-ink">{item.label}</p>
+                  <p className="mt-0.5 text-[10px] text-ink-subtle">{item.hint}</p>
                 </div>
-                {active ? <Badge tone="signal">CURRENT</Badge> : <ChevronRight className="h-4 w-4 text-white/28" />}
+                {active ? <Badge tone="signal">CURRENT</Badge> : <ChevronRight className="h-4 w-4 text-ink-tertiary" />}
               </Link>
             );
           })}

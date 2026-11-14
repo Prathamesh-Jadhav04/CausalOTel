@@ -120,7 +120,7 @@ export default function Traces() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 border-t border-white/[0.065] pt-3">
-            <span className="mr-1 inline-flex items-center gap-1.5 font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/42">
+            <span className="mr-1 inline-flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.045em] text-ink-subtle">
               <Filter className="h-3.5 w-3.5" />
               Status
             </span>

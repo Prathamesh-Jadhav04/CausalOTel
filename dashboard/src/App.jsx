@@ -17,6 +17,7 @@ import Settings from './pages/Settings';
 import Login from './pages/Login';
 import NotFound from './pages/NotFound';
 import { AuthProvider, useAuth } from './lib/AuthContext.jsx';
+import { ThemeProvider } from './lib/ThemeContext.jsx';
 import { NOT_FOUND_ROUTE, ROUTE_PATHS } from './lib/routes.js';
 
 function Shell() {
@@ -83,10 +84,12 @@ function Shell() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <Shell />
-      </BrowserRouter>
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <BrowserRouter>
+          <Shell />
+        </BrowserRouter>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }

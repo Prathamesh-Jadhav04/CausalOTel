@@ -318,7 +318,7 @@ export default function FaultInjection() {
           ) : faultError ? (
             <p className="text-xs text-white/46">Unavailable until the fault endpoints respond.</p>
           ) : activeFaults.length === 0 ? (
-            <div className="flex items-center gap-2 rounded-2xl border border-emerald-400/15 bg-emerald-400/[0.055] px-3.5 py-3 text-[11px] text-emerald-300">
+            <div className="flex items-center gap-2 rounded-lg border border-emerald-400/15 bg-emerald-400/[0.055] px-3.5 py-3 text-[11px] text-emerald-300">
               <CheckCircle2 className="h-4 w-4 shrink-0" />
               Payment and inventory services report NORMAL operation.
             </div>
@@ -327,7 +327,7 @@ export default function FaultInjection() {
               {activeFaults.map((fault) => (
                 <span
                   key={fault.target}
-                  className="inline-flex max-w-full items-center gap-2 rounded-2xl border border-rose-400/20 bg-rose-500/[0.075] px-3 py-2 text-[11px] text-rose-200"
+                  className="inline-flex max-w-full items-center gap-2 rounded-lg border border-rose-400/20 bg-rose-500/[0.075] px-3 py-2 text-[11px] text-rose-200"
                 >
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-rose-300" />
                   <span className="break-all font-mono font-semibold">{fault.target}:</span>
@@ -350,7 +350,7 @@ export default function FaultInjection() {
               className={cn('flex flex-col p-4 sm:p-5', index < 3 ? 'stagger-1' : 'stagger-2', 'animate-fade-up')}
             >
               <div className="flex items-start justify-between gap-3">
-                <span className="grid h-10 w-10 place-items-center rounded-xl border border-white/[0.08] bg-gradient-to-br from-white/[0.08] to-white/[0.02] text-white/62">
+                <span className="grid h-10 w-10 place-items-center rounded-lg border border-white/[0.08] bg-gradient-to-br from-white/[0.08] to-white/[0.02] text-white/62">
                   <Icon className="h-4 w-4" />
                 </span>
                 <StatusBadge status={scenario.severity} />
@@ -387,13 +387,13 @@ export default function FaultInjection() {
           {productError ? (
             <Notice tone="error">Catalog unavailable: {productError.detail}</Notice>
           ) : product ? (
-            <div className="flex flex-col gap-2 rounded-2xl border border-white/[0.065] bg-black/20 p-3.5 text-[11px] sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-2 rounded-lg border border-white/[0.065] bg-inset p-3.5 text-[11px] sm:flex-row sm:items-center sm:justify-between">
               <span className="break-all font-mono font-semibold text-white/70">{product.sku}</span>
               <span className="min-w-0 break-words text-white/50">{product.name}</span>
               <span className="shrink-0 font-semibold text-white/78">${(Number(product.price_cents) / 100).toFixed(2)}</span>
             </div>
           ) : (
-            <div className="rounded-2xl border border-white/[0.065] bg-black/20 p-3.5 text-[11px] text-white/46">
+            <div className="rounded-lg border border-white/[0.065] bg-inset p-3.5 text-[11px] text-white/46">
               Loading catalog...
             </div>
           )}
@@ -412,7 +412,7 @@ export default function FaultInjection() {
 
         {checkoutResult && (
           <div className={cn(
-            'mt-4 rounded-2xl border p-4',
+            'mt-4 rounded-lg border p-4',
             checkoutResult.success
               ? 'border-emerald-400/20 bg-emerald-400/[0.055]'
               : 'border-rose-400/20 bg-rose-400/[0.055]'
@@ -445,7 +445,7 @@ export default function FaultInjection() {
                     View incidents <ArrowRight className="h-3 w-3" />
                   </Button>
                 </div>
-                <div className="break-all rounded-xl border border-white/[0.06] bg-black/25 p-3 font-mono text-[10px] leading-relaxed text-white/62">
+                <div className="break-all rounded-lg border border-white/[0.06] bg-inset p-3 font-mono text-[10px] leading-relaxed text-white/62">
                   <span className="font-bold text-rose-300">{checkoutResult.error.code || 'ERROR'}</span>
                   {' — '}
                   {checkoutResult.error.detail}

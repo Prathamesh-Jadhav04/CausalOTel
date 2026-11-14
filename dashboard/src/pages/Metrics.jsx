@@ -39,7 +39,7 @@ function formatPercent(value) {
 
 function MetricTile({ label, value, accent }) {
   return (
-    <div className="rounded-xl border border-white/[0.055] bg-black/20 p-2.5">
+    <div className="rounded-lg border border-white/[0.055] bg-inset p-2.5">
       <p className="text-[9px] text-white/40">{label}</p>
       <p className={cn('mt-1 font-mono text-[12px] font-semibold', accent || 'text-white/74')}>{value}</p>
     </div>
@@ -168,7 +168,7 @@ export default function Metrics() {
         <GlassCard className="p-3.5 sm:p-4">
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="mr-1 font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/42">Filter service</span>
+              <span className="mr-1 font-medium uppercase text-[10px] tracking-[0.045em] text-ink-subtle">Filter service</span>
               <Chip active={selectedService === 'ALL'} onClick={() => setSelectedService('ALL')}>
                 All services
               </Chip>
@@ -215,7 +215,7 @@ export default function Metrics() {
             </div>
 
             {!service.available ? (
-              <div className="mt-4 rounded-2xl border border-amber-400/15 bg-amber-400/[0.045] p-3">
+              <div className="mt-4 rounded-lg border border-amber-400/15 bg-amber-400/[0.045] p-3">
                 <div className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-200">
                   <AlertTriangle className="h-3.5 w-3.5" />
                   No metric samples

@@ -88,26 +88,26 @@ export default function TraceDetail() {
         <Badge>{selectedSpan.service}</Badge>
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <div className="glass-inset rounded-2xl p-3.5">
+        <div className="glass-inset rounded-lg p-3.5">
           <p className="font-mono text-[8px] font-medium uppercase tracking-[0.08em] text-white/40">Span ID</p>
           <div className="mt-1 flex items-center gap-2">
             <p className="min-w-0 break-all font-mono text-[11px] text-white/78">{selectedSpan.spanId}</p>
             <CopyButton compact value={selectedSpan.spanId} label="Copy span ID" />
           </div>
         </div>
-        <div className="glass-inset rounded-2xl p-3.5">
+        <div className="glass-inset rounded-lg p-3.5">
           <p className="text-[8px] font-semibold uppercase tracking-[0.16em] text-white/40">Service</p>
           <p className="mt-1 break-all font-mono text-[11px] text-white/78">{selectedSpan.service}</p>
         </div>
-        <div className="glass-inset rounded-2xl p-3.5">
+        <div className="glass-inset rounded-lg p-3.5">
           <p className="text-[8px] font-semibold uppercase tracking-[0.16em] text-white/40">Computed self-time</p>
           <p className="mt-1 font-mono text-sm font-semibold text-signal-300">{selectedSpan.selfTimeMs}ms</p>
         </div>
-        <div className="glass-inset rounded-2xl p-3.5">
+        <div className="glass-inset rounded-lg p-3.5">
           <p className="text-[8px] font-semibold uppercase tracking-[0.16em] text-white/40">Duration</p>
           <p className="mt-1 font-mono text-sm font-semibold text-white/78">{selectedSpan.durationMs}ms</p>
         </div>
-        <div className="glass-inset col-span-2 rounded-2xl p-3.5">
+        <div className="glass-inset col-span-2 rounded-lg p-3.5">
           <p className="text-[8px] font-semibold uppercase tracking-[0.16em] text-white/40">Status message</p>
           <p className="mt-1 break-words font-mono text-[11px] leading-relaxed text-white/70">
             {selectedSpan.statusMessage || selectedSpan.statusCode}
@@ -226,7 +226,7 @@ export default function TraceDetail() {
                     type="button"
                     onClick={() => setSelectedSpan(span)}
                     className={cn(
-                      'block w-full rounded-2xl border p-3 text-left transition duration-200',
+                      'block w-full rounded-lg border p-3 text-left transition duration-200',
                       isSelected
                         ? 'border-signal-400/35 bg-signal-500/[0.07]'
                         : 'border-white/[0.065] bg-white/[0.025] hover:border-white/12 hover:bg-white/[0.045]'
@@ -248,14 +248,14 @@ export default function TraceDetail() {
                         <span>self <strong className="font-semibold text-signal-300">{span.selfTimeMs}ms</strong></span>
                       </div>
                     </div>
-                    <div className="relative mt-2.5 h-2 overflow-hidden rounded-full bg-black/35">
+                    <div className="relative mt-2.5 h-2 overflow-hidden rounded-full bg-inset">
                       <div
                         style={{ left: `${leftPercent}%`, width: `${widthPercent}%` }}
                         className={cn(
                           'absolute inset-y-0 rounded-full transition-[width,left] duration-500',
                           isError
                             ? 'bg-gradient-to-r from-rose-500 to-red-600 shadow-[0_0_12px_rgba(244,63,94,0.45)]'
-                            : 'bg-gradient-to-r from-signal-400 to-signal-600 shadow-[0_0_12px_rgba(255,45,85,0.35)]'
+                            : 'bg-gradient-to-r from-signal-400 to-signal-600 shadow-[0_0_12px_rgba(94,105,209,0.35)]'
                         )}
                       />
                     </div>

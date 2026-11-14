@@ -125,7 +125,7 @@ export default function Settings() {
             return (
               <div
                 key={service.name}
-                className="rounded-2xl border border-white/[0.065] bg-white/[0.025] p-3.5 transition hover:border-white/12 hover:bg-white/[0.04]"
+                className="rounded-lg border border-white/[0.065] bg-white/[0.025] p-3.5 transition hover:border-white/12 hover:bg-white/[0.04]"
               >
                 <div className="flex items-start justify-between gap-2">
                   <span className="break-all font-mono text-[12px] font-semibold text-white/84">{service.name}</span>
@@ -169,7 +169,7 @@ export default function Settings() {
           {telemetryConfigs.map((telemetry) => (
             <div
               key={`${telemetry.name}-${telemetry.port}`}
-              className="flex flex-col gap-2 rounded-2xl border border-white/[0.065] bg-white/[0.025] p-3.5 sm:flex-row sm:items-center sm:justify-between"
+              className="flex flex-col gap-2 rounded-lg border border-white/[0.065] bg-white/[0.025] p-3.5 sm:flex-row sm:items-center sm:justify-between"
             >
               <div className="min-w-0">
                 <p className="text-[12px] font-semibold text-white/78">{telemetry.name}</p>
@@ -189,22 +189,22 @@ export default function Settings() {
             title="File storage & crash spool isolation"
           />
           <div className="mt-4 space-y-2 font-mono">
-            <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3.5">
-              <p className="font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/36">SQLite data directory</p>
+            <div className="rounded-lg border border-white/[0.06] bg-inset p-3.5">
+              <p className="font-medium uppercase text-[10px] tracking-[0.045em] text-ink-subtle">SQLite data directory</p>
               <div className="mt-1 flex items-center gap-2">
                 <p className="min-w-0 break-all text-[11px] text-signal-300/80">%LOCALAPPDATA%\CausalOTel\data\</p>
                 <CopyButton compact value="%LOCALAPPDATA%\\CausalOTel\\data\\" label="Copy SQLite data path" />
               </div>
             </div>
-            <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3.5">
-              <p className="font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/36">Incident spool directory</p>
+            <div className="rounded-lg border border-white/[0.06] bg-inset p-3.5">
+              <p className="font-medium uppercase text-[10px] tracking-[0.045em] text-ink-subtle">Incident spool directory</p>
               <div className="mt-1 flex items-center gap-2">
                 <p className="min-w-0 break-all text-[11px] text-signal-300/80">%LOCALAPPDATA%\CausalOTel\spool\incidents\</p>
                 <CopyButton compact value="%LOCALAPPDATA%\\CausalOTel\\spool\\incidents\\" label="Copy incident spool path" />
               </div>
             </div>
-            <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3.5">
-              <p className="font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/36">Tempo data / WAL</p>
+            <div className="rounded-lg border border-white/[0.06] bg-inset p-3.5">
+              <p className="font-medium uppercase text-[10px] tracking-[0.045em] text-ink-subtle">Tempo data / WAL</p>
               <div className="mt-1 flex items-center gap-2">
                 <p className="min-w-0 break-all text-[11px] text-signal-300/80">%LOCALAPPDATA%\CausalOTel\tempo-data\</p>
                 <CopyButton compact value="%LOCALAPPDATA%\\CausalOTel\\tempo-data\\" label="Copy Tempo data path" />
@@ -233,12 +233,12 @@ export default function Settings() {
 
           {nativeCore && (
             <div className="mt-4 space-y-2 font-mono">
-              <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3.5">
+              <div className="rounded-lg border border-white/[0.06] bg-inset p-3.5">
                 <p className="text-[9px] uppercase tracking-[0.12em] text-white/36">CMake target</p>
                 <p className="mt-1 break-all text-[11px] font-semibold text-signal-300/80">{nativeCore.target}</p>
               </div>
 
-              <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3.5">
+              <div className="rounded-lg border border-white/[0.06] bg-inset p-3.5">
                 <p className="text-[9px] uppercase tracking-[0.12em] text-white/36">Build output</p>
                 {nativeCore.available ? (
                   <p className="mt-1 break-all text-[11px] font-semibold text-emerald-300">{nativeCore.binary}</p>
@@ -248,8 +248,8 @@ export default function Settings() {
               </div>
 
               {!nativeCore.available && (
-                <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3.5">
-                  <p className="flex items-center gap-1 font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/36">
+                <div className="rounded-lg border border-white/[0.06] bg-inset p-3.5">
+                  <p className="flex items-center gap-1 font-medium uppercase text-[10px] tracking-[0.045em] text-ink-subtle">
                     <Terminal className="h-3 w-3" />
                     Build command
                   </p>
@@ -260,7 +260,7 @@ export default function Settings() {
                 </div>
               )}
 
-              <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3.5">
+              <div className="rounded-lg border border-white/[0.06] bg-inset p-3.5">
                 <p className="text-[9px] uppercase tracking-[0.12em] text-white/36">Algorithm</p>
                 <p className="mt-1 text-[11px] leading-relaxed text-signal-300/80">
                   O(N log N) interval union; pure-JS fallback when absent
