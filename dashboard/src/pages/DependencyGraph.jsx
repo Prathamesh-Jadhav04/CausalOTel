@@ -25,11 +25,13 @@ import {
   useMediaQuery
 } from '../components/ui.jsx';
 
-const HEALTH_COLORS = {
-  UP: '#34d399',
-  DOWN: '#fbbf24',
-  UNREACHABLE: '#fb7185',
-  UNKNOWN: '#8b8b93'
+/* Node ring + label tints resolve through CSS variables so the graph stays
+   legible on both the black and the white canvas. */
+const HEALTH_TEXT_COLORS = {
+  UP: 'var(--graph-up)',
+  DOWN: 'var(--graph-down)',
+  UNREACHABLE: 'var(--graph-unreachable)',
+  UNKNOWN: 'var(--graph-unknown)'
 };
 
 function layoutNodes(nodes, compact) {
@@ -121,7 +123,7 @@ export default function DependencyGraph() {
               <select
                 value={window}
                 onChange={(event) => setWindow(event.target.value)}
-                className="h-10 appearance-none rounded-full border border-white/[0.1] bg-white/[0.05] pl-3.5 pr-9 text-[11px] font-medium text-white/74 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] outline-none backdrop-blur-xl transition hover:bg-white/[0.08] focus:border-signal-400/50 focus:ring-4 focus:ring-signal-500/10"
+                className="h-10 appearance-none rounded-lg border border-white/[0.1] bg-surface-1/70 pl-3.5 pr-9 text-[13px] font-medium text-ink-muted shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] outline-none backdrop-blur-xl transition hover:bg-white/[0.08] focus:border-signal-400/50 focus:ring-4 focus:ring-signal-500/10"
                 aria-label="Graph time window"
               >
                 <option value="15m">Last 15 minutes</option>
@@ -129,7 +131,7 @@ export default function DependencyGraph() {
                 <option value="6h">Last 6 hours</option>
                 <option value="24h">Last 24 hours</option>
               </select>
-              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[9px] text-white/42">▼</span>
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[9px] text-ink-tertiary">▼</span>
             </div>
             <Button onClick={load} loading={loading} variant="secondary">
               <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
@@ -207,7 +209,7 @@ export default function DependencyGraph() {
           </p>
         </div>
 
-        <div className="glass-inset relative overflow-hidden rounded-[20px] p-2 sm:p-4">
+        <div className="glass-inset relative overflow-hidden rounded-2xl p-2 sm:p-4">
           {loading ? (
             <div className="flex min-h-[380px] items-center justify-center">
               <div className="flex items-center gap-2.5 text-xs text-white/50">
@@ -233,14 +235,14 @@ export default function DependencyGraph() {
             >
               <defs>
                 <linearGradient id="edge-signal" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#ff617a" stopOpacity="0.7" />
-                  <stop offset="100%" stopColor="#ff2d55" stopOpacity="0.25" />
+                  <stop offset="0%" style={{ stopColor: 'var(--edge-a)', stopOpacity: 'var(--edge-opacity-a)' }} />
+                  <stop offset="100%" style={{ stopColor: 'var(--edge-b)', stopOpacity: 'var(--edge-opacity-b)' }} />
                 </linearGradient>
                 <marker id="graph-arrow" viewBox="0 0 10 10" refX="20" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#ff617a" fillOpacity="0.7" />
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#6f7ae4" fillOpacity="0.7" style={{ fill: 'var(--edge-a)' }} />
                 </marker>
                 <marker id="graph-arrow-error" viewBox="0 0 10 10" refX="20" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#fb7185" />
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#fb7185" style={{ fill: 'var(--graph-unreachable)' }} />
                 </marker>
                 <filter id="node-soft-glow" x="-60%" y="-60%" width="220%" height="220%">
                   <feGaussianBlur stdDeviation="4" result="blur" />
@@ -265,6 +267,7 @@ export default function DependencyGraph() {
                       x2={end.x}
                       y2={end.y}
                       stroke={hasError ? '#fb7185' : 'url(#edge-signal)'}
+                      style={hasError ? { stroke: 'var(--graph-unreachable)' } : undefined}
                       strokeWidth={strokeWidth}
                       strokeDasharray={hasError ? '6 4' : '4 3'}
                       strokeOpacity={hasError ? 0.9 : 0.75}
@@ -281,13 +284,15 @@ export default function DependencyGraph() {
                 if (!position) return null;
                 const cyclic = graphData.cyclicComponents?.some(component => component.includes(node.id));
                 const healthStatus = node.health?.status || 'UNKNOWN';
-                const stroke = cyclic ? '#fb7185' : HEALTH_COLORS[healthStatus] || HEALTH_COLORS.UNKNOWN;
+                const stroke = cyclic
+                  ? 'var(--graph-unreachable)'
+                  : HEALTH_TEXT_COLORS[healthStatus] || 'var(--graph-unknown)';
                 const selected = selectedNodeId === node.id;
                 const fill = healthStatus === 'UP'
-                  ? 'rgba(6, 36, 26, 0.94)'
+                  ? 'var(--graph-node-up)'
                   : healthStatus === 'DOWN'
-                    ? 'rgba(42, 28, 7, 0.94)'
-                    : 'rgba(18, 18, 22, 0.96)';
+                    ? 'var(--graph-node-down)'
+                    : 'var(--graph-node)';
 
                 return (
                   <g
@@ -307,12 +312,11 @@ export default function DependencyGraph() {
                   >
                     <circle r={nodeRadius + 8} fill="transparent" />
                     {selected && (
-                      <circle r={nodeRadius + 7} fill="rgba(255,45,85,0.12)" stroke="rgba(255,97,122,0.35)" strokeWidth="1" />
+                      <circle r={nodeRadius + 7} fill="rgba(94,105,209,0.14)" stroke="rgba(130,143,255,0.4)" strokeWidth="1" />
                     )}
                     <circle
                       r={nodeRadius}
-                      fill={fill}
-                      stroke={stroke}
+                      style={{ fill, stroke }}
                       strokeWidth={cyclic ? 3 : selected ? 2.6 : 2}
                       filter={selected ? 'url(#node-soft-glow)' : undefined}
                     >
@@ -321,29 +325,29 @@ export default function DependencyGraph() {
                     <text
                       textAnchor="middle"
                       dy="3.5"
-                      fill="#f4f4f5"
                       fontSize={compact ? 9 : 10.5}
                       fontWeight="650"
                       fontFamily="monospace"
+                      style={{ fill: 'var(--graph-node-ink)' }}
                     >
                       {shortName(node.id).slice(0, compact ? 10 : 12)}
                     </text>
                     <text
                       textAnchor="middle"
                       dy={nodeRadius + 14}
-                      fill={stroke}
                       fontSize={compact ? 8 : 9}
                       fontWeight="600"
                       fontFamily="monospace"
+                      style={{ fill: stroke }}
                     >
                       {healthStatus}
                     </text>
                     <text
                       textAnchor="middle"
                       dy={nodeRadius + 25}
-                      fill="rgba(255,255,255,0.44)"
                       fontSize={compact ? 7.5 : 8.5}
                       fontFamily="monospace"
+                      style={{ fill: 'var(--graph-label)' }}
                     >
                       {node.id}
                     </text>
@@ -356,22 +360,22 @@ export default function DependencyGraph() {
 
         {selectedNode && (
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <div className="glass-inset rounded-2xl p-3">
+            <div className="glass-inset rounded-lg p-3">
               <p className="font-mono text-[8px] font-medium uppercase tracking-[0.08em] text-white/36">Node</p>
               <div className="mt-1 flex items-center gap-1.5">
                 <p className="min-w-0 break-all font-mono text-[11px] font-semibold text-white/84">{selectedNode.id}</p>
                 <CopyButton compact value={selectedNode.id} label="Copy node ID" />
               </div>
             </div>
-            <div className="glass-inset rounded-2xl p-3">
+            <div className="glass-inset rounded-lg p-3">
               <p className="font-mono text-[8px] font-medium uppercase tracking-[0.08em] text-white/36">Health</p>
               <div className="mt-1.5"><StatusBadge status={selectedNode.health?.status || 'UNKNOWN'} /></div>
             </div>
-            <div className="glass-inset rounded-2xl p-3">
+            <div className="glass-inset rounded-lg p-3">
               <p className="font-mono text-[8px] font-medium uppercase tracking-[0.08em] text-white/36">Spans</p>
               <p className="mt-1 font-mono text-sm font-semibold text-white/84">{selectedNode.spanCount}</p>
             </div>
-            <div className="glass-inset rounded-2xl p-3">
+            <div className="glass-inset rounded-lg p-3">
               <p className="font-mono text-[8px] font-medium uppercase tracking-[0.08em] text-white/36">Errors</p>
               <p className={cn('mt-1 font-mono text-sm font-semibold', selectedNode.errorCount > 0 ? 'text-rose-300' : 'text-white/84')}>
                 {selectedNode.errorCount}
@@ -382,7 +386,7 @@ export default function DependencyGraph() {
       </GlassCard>
 
       <GlassCard className="flex items-start gap-3 p-4 text-[11px] leading-relaxed text-white/44">
-        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-white/[0.08] bg-white/[0.04] text-white/54">
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-white/[0.08] bg-white/[0.04] text-white/54">
           <GitFork className="h-4 w-4" />
         </span>
         <p className="min-w-0">

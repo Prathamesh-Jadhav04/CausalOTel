@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="CausalOTel">
   <defs>
     <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
-      <stop stop-color="#ff617a" />
-      <stop offset=".52" stop-color="#ff2d55" />
-      <stop offset="1" stop-color="#be123c" />
+      <stop stop-color="#828fff" />
+      <stop offset=".52" stop-color="#5e6ad2" />
+      <stop offset="1" stop-color="#3d4693" />
     </linearGradient>
     <radialGradient id="sheen" cx=".28" cy=".14" r=".9">
       <stop stop-color="#ffffff" stop-opacity=".55" />

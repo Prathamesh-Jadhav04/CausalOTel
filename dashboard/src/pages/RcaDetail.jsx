@@ -176,7 +176,7 @@ export default function RcaDetail() {
       {data && (
         <>
           <GlassCard className="relative overflow-hidden p-4 sm:p-6">
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_150%_at_0%_0%,rgba(255,45,85,0.17),transparent_56%)]" />
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_150%_at_0%_0%,rgba(94,105,209,0.18),transparent_56%)]" />
             <div className="relative flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
               <div className="min-w-0 space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -203,7 +203,7 @@ export default function RcaDetail() {
                 <p className="break-all font-mono text-[10px] text-white/40">Root cause type: {data.rootCauseType}</p>
               </div>
 
-              <div className="flex shrink-0 items-center gap-4 self-start rounded-3xl border border-white/[0.07] bg-black/25 p-3.5 sm:gap-6 sm:p-4 xl:self-auto">
+              <div className="flex shrink-0 items-center gap-4 self-start rounded-lg border border-white/[0.07] bg-inset p-3.5 sm:gap-6 sm:p-4 xl:self-auto">
                 <ProgressRing
                   ratio={data.confidenceScore ?? 0}
                   display={data.confidenceScore === null ? '—' : `${(data.confidenceScore * 100).toFixed(0)}%`}
@@ -240,7 +240,7 @@ export default function RcaDetail() {
               action={<Badge tone="signal">{causalPath.length} hops</Badge>}
             />
             {causalPath.length === 0 ? (
-              <div className="glass-inset mt-4 rounded-2xl p-4 text-xs text-white/46">
+              <div className="glass-inset mt-4 rounded-lg p-4 text-xs text-white/46">
                 The analysis engine recorded no causal path for this incident.
               </div>
             ) : (
@@ -251,7 +251,7 @@ export default function RcaDetail() {
                     <React.Fragment key={`${step.service}-${index}`}>
                       <div
                         className={cn(
-                          'min-w-0 flex-1 rounded-2xl border p-3.5 transition',
+                          'min-w-0 flex-1 rounded-lg border p-3.5 transition',
                           isCulprit
                             ? 'border-signal-400/30 bg-signal-500/[0.09] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]'
                             : 'border-white/[0.065] bg-white/[0.028]'
@@ -288,7 +288,7 @@ export default function RcaDetail() {
                 action={<Badge tone={evidence.length ? 'emerald' : 'neutral'}>{evidence.length} signals</Badge>}
               />
               {evidence.length === 0 ? (
-                <div className="glass-inset mt-4 rounded-2xl p-4 text-xs text-white/46">
+                <div className="glass-inset mt-4 rounded-lg p-4 text-xs text-white/46">
                   No evidence signals were recorded.
                 </div>
               ) : (
@@ -296,7 +296,7 @@ export default function RcaDetail() {
                   {evidence.map((item, index) => (
                     <div
                       key={`${item.type}-${index}`}
-                      className="flex items-start gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.025] p-3.5"
+                      className="flex items-start gap-3 rounded-lg border border-white/[0.06] bg-white/[0.025] p-3.5"
                     >
                       <span className="mt-0.5 shrink-0">
                         {item.severity === 'CRITICAL' ? (
@@ -326,7 +326,7 @@ export default function RcaDetail() {
               <GlassCard className="p-4 sm:p-6">
                 <CardHeader icon={Cpu} eyebrow="Timing" title="Sweep-line interval union" />
                 {data.sweepLineMetrics ? (
-                  <dl className="mt-4 space-y-1 rounded-2xl border border-white/[0.06] bg-black/20 p-3.5 font-mono text-[11px]">
+                  <dl className="mt-4 space-y-1 rounded-lg border border-white/[0.06] bg-inset p-3.5 font-mono text-[11px]">
                     <div className="flex items-center justify-between gap-3 border-b border-white/[0.06] py-1.5">
                       <dt className="text-white/46">Total span duration</dt>
                       <dd className="text-white/78">{data.sweepLineMetrics.totalSpanDurationMs} ms</dd>
@@ -345,7 +345,7 @@ export default function RcaDetail() {
                     </div>
                   </dl>
                 ) : (
-                  <div className="glass-inset mt-4 rounded-2xl p-4 text-xs text-white/46">
+                  <div className="glass-inset mt-4 rounded-lg p-4 text-xs text-white/46">
                     No sweep-line metrics were recorded for this incident.
                   </div>
                 )}
@@ -354,7 +354,7 @@ export default function RcaDetail() {
               <GlassCard className="p-4 sm:p-6">
                 <CardHeader icon={Sparkles} eyebrow="Recommended" title="Automated remediation actions" />
                 {remediations.length === 0 ? (
-                  <div className="glass-inset mt-4 rounded-2xl p-4 text-xs text-white/46">
+                  <div className="glass-inset mt-4 rounded-lg p-4 text-xs text-white/46">
                     No remediation recommendation was recorded.
                   </div>
                 ) : (
@@ -362,7 +362,7 @@ export default function RcaDetail() {
                     {remediations.map((action, index) => (
                       <li
                         key={`${action}-${index}`}
-                        className="flex items-start gap-2.5 rounded-2xl border border-white/[0.06] bg-white/[0.025] p-3 text-[11px] leading-relaxed text-white/62"
+                        className="flex items-start gap-2.5 rounded-lg border border-white/[0.06] bg-white/[0.025] p-3 text-[11px] leading-relaxed text-white/62"
                       >
                         <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-signal-400/25 bg-signal-500/10 text-[9px] font-bold text-signal-300">
                           {index + 1}
@@ -379,7 +379,7 @@ export default function RcaDetail() {
           {showJson && (
             <GlassCard className="p-4 sm:p-5">
               <div className="flex items-center justify-between gap-3">
-                <p className="font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/46">Recorded incident JSON</p>
+                <p className="text-[10px] font-medium uppercase tracking-[0.045em] text-ink-subtle">Recorded incident JSON</p>
                 <div className="flex items-center gap-2">
                   <CopyButton value={JSON.stringify(data, null, 2)} label="Copy JSON" />
                   <IconButton label="Download JSON" onClick={downloadJson} className="h-9 w-9">
@@ -387,7 +387,7 @@ export default function RcaDetail() {
                   </IconButton>
                 </div>
               </div>
-              <pre className="mt-3 max-h-[480px] overflow-auto rounded-2xl border border-white/[0.06] bg-black/30 p-4 font-mono text-[10px] leading-relaxed text-emerald-300/80">
+              <pre className="mt-3 max-h-[480px] overflow-auto rounded-lg border border-white/[0.06] bg-inset p-4 font-mono text-[10px] leading-relaxed text-emerald-300/80">
                 {JSON.stringify(data, null, 2)}
               </pre>
             </GlassCard>

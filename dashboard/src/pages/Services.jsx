@@ -143,7 +143,7 @@ export default function Services() {
 
               <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-3">
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/[0.08] bg-gradient-to-br from-white/[0.08] to-white/[0.02] text-white/64">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-white/[0.08] bg-gradient-to-br from-white/[0.08] to-white/[0.02] text-white/64">
                     <Server className="h-4 w-4" />
                   </span>
                   <div className="min-w-0">

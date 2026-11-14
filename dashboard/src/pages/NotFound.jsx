@@ -13,7 +13,7 @@ export default function NotFound() {
   return (
     <div className="flex min-h-[70vh] items-center justify-center">
       <GlassCard className="relative w-full max-w-lg overflow-hidden px-6 py-12 text-center sm:px-10">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(90%_120%_at_50%_0%,rgba(255,45,85,0.12),transparent_60%)]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(90%_120%_at_50%_0%,rgba(94,105,209,0.14),transparent_60%)]" />
         <div className="relative">
           <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl border border-white/[0.08] bg-white/[0.04] text-white/54">
             <Compass className="h-6 w-6" />

@@ -215,7 +215,7 @@ export default function Overview() {
           </div>
 
           <div className="w-full shrink-0 xl:w-[320px]">
-            <div className="glass-inset rounded-2xl p-4">
+            <div className="glass-inset rounded-lg p-4">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-white/42">Latest incident</p>
                 {latestIncident && <StatusBadge status={latestIncident.severity} />}
@@ -302,7 +302,7 @@ export default function Overview() {
             {healthError ? (
               <ErrorBanner title="Health probe failed" detail={healthError.detail} />
             ) : serviceRows.length === 0 ? (
-              <div className="glass-inset rounded-2xl p-4 text-xs text-white/50">
+              <div className="glass-inset rounded-lg p-4 text-xs text-white/50">
                 {loading ? 'Probing services...' : 'No services reported by the probe.'}
               </div>
             ) : (
@@ -344,7 +344,7 @@ export default function Overview() {
             {productError ? (
               <ErrorBanner title="Catalog unavailable" detail={productError.detail} />
             ) : product ? (
-              <div className="glass-inset rounded-2xl p-3.5">
+              <div className="glass-inset rounded-lg p-3.5">
                 <div className="flex items-center justify-between gap-3">
                   <span className="font-mono text-[11px] font-semibold text-white/78">{product.sku}</span>
                   <span className="text-sm font-semibold text-white">${(Number(product.price_cents) / 100).toFixed(2)}</span>
@@ -355,14 +355,14 @@ export default function Overview() {
                 </div>
               </div>
             ) : (
-              <div className="glass-inset rounded-2xl p-3.5 text-xs text-white/46">
+              <div className="glass-inset rounded-lg p-3.5 text-xs text-white/46">
                 {loading ? 'Loading catalog...' : 'No product available.'}
               </div>
             )}
 
             {checkoutResult && (
               <div className={cn(
-                'mt-3 rounded-2xl border p-3.5 text-xs',
+                'mt-3 rounded-lg border p-3.5 text-xs',
                 checkoutResult.success
                   ? 'border-emerald-400/20 bg-emerald-400/[0.07] text-emerald-200'
                   : 'border-rose-400/20 bg-rose-400/[0.07] text-rose-200'

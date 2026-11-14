@@ -8,19 +8,22 @@ import {
   Inbox,
   Info,
   Loader2,
+  Moon,
   Search,
   ShieldCheck,
+  Sun,
   X
 } from 'lucide-react';
+import { useTheme } from '../lib/ThemeContext.jsx';
 
 export function cn(...parts) {
   return parts.filter(Boolean).join(' ');
 }
 
 const MARK_SIZES = {
-  sm: 'h-9 w-9 rounded-xl',
-  md: 'h-10 w-10 rounded-[14px]',
-  lg: 'h-14 w-14 rounded-[20px]'
+  sm: 'h-9 w-9 rounded-lg',
+  md: 'h-10 w-10 rounded-xl',
+  lg: 'h-14 w-14 rounded-2xl'
 };
 
 const MARK_ICON_SIZES = {
@@ -33,8 +36,8 @@ export function BrandMark({ size = 'md', className }) {
   return (
     <span
       className={cn(
-        'relative grid shrink-0 place-items-center overflow-hidden bg-gradient-to-br from-signal-400 via-signal-500 to-signal-700 text-white ring-1 ring-white/20',
-        'shadow-[0_12px_32px_-10px_rgba(255,45,85,0.85)]',
+        'relative grid shrink-0 place-items-center overflow-hidden bg-gradient-to-br from-signal-300 via-signal-500 to-signal-700 text-on-accent ring-1 ring-white/25',
+        'shadow-[0_12px_32px_-10px_rgba(94,105,209,0.85)]',
         MARK_SIZES[size] || MARK_SIZES.md,
         className
       )}
@@ -51,10 +54,10 @@ export function BrandLockup({ size = 'md', subtitle = true, className, subtitleC
     <div className={cn('flex min-w-0 items-center gap-3', className)}>
       <BrandMark size={size} />
       <div className="min-w-0">
-        <p className="truncate text-[15px] font-semibold tracking-[-0.02em] text-white">CausalOTel</p>
+        <p className="truncate text-[15px] font-semibold tracking-[-0.02em] text-ink">CausalOTel</p>
         {subtitle && (
           <p className={cn(
-            'mt-0.5 truncate font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/48',
+            'mt-0.5 truncate text-[10px] font-medium uppercase tracking-[0.045em] text-ink-subtle',
             subtitleClassName
           )}>
             Root cause observability
@@ -77,7 +80,7 @@ const BADGE_TONES = {
 
 const DOT_TONES = {
   neutral: 'bg-white/35',
-  signal: 'bg-signal-400 shadow-[0_0_10px_rgba(255,45,85,0.75)]',
+  signal: 'bg-signal-400 shadow-[0_0_10px_rgba(94,105,209,0.75)]',
   emerald: 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.55)]',
   amber: 'bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.5)]',
   rose: 'bg-rose-400 shadow-[0_0_10px_rgba(251,113,133,0.55)]',
@@ -128,11 +131,11 @@ export function StatusBadge({ status, label, className, dot = true }) {
 
 const BUTTON_VARIANTS = {
   primary:
-    'border border-white/20 bg-gradient-to-b from-signal-400 via-signal-500 to-signal-600 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.28),0_14px_34px_-14px_rgba(255,45,85,0.95)] hover:brightness-110',
+    'border border-white/15 bg-signal-500 text-on-accent shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_14px_34px_-14px_rgba(94,105,209,0.95)] hover:bg-signal-600 active:bg-signal-700',
   secondary:
-    'glass-pill text-white/82 hover:border-white/20 hover:text-white',
+    'border border-white/[0.12] bg-white/[0.045] text-ink backdrop-blur-xl shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] hover:border-white/[0.22] hover:bg-white/[0.075] hover:text-white',
   ghost:
-    'border border-transparent text-white/60 hover:bg-white/[0.06] hover:text-white',
+    'border border-transparent text-ink-muted hover:bg-white/[0.06] hover:text-ink',
   danger:
     'border border-rose-300/25 bg-rose-500/[0.12] text-rose-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] hover:border-rose-300/40 hover:bg-rose-500/[0.18]',
   amber:
@@ -142,14 +145,14 @@ const BUTTON_VARIANTS = {
 };
 
 const BUTTON_SIZES = {
-  sm: 'h-9 rounded-full px-3.5 text-[11px]',
-  md: 'h-10 rounded-full px-4 text-[12px]',
-  lg: 'h-12 rounded-full px-5 text-[13px]'
+  sm: 'h-9 rounded-lg px-3.5 text-[13px]',
+  md: 'h-10 rounded-lg px-3.5 text-sm',
+  lg: 'h-12 rounded-lg px-5 text-sm'
 };
 
 export function buttonStyles({ variant = 'secondary', size = 'md', className } = {}) {
   return cn(
-    'inline-flex select-none items-center justify-center gap-2 whitespace-nowrap font-semibold transition duration-200 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-45',
+    'inline-flex select-none items-center justify-center gap-2 whitespace-nowrap font-medium transition duration-200 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-45',
     BUTTON_VARIANTS[variant] || BUTTON_VARIANTS.secondary,
     BUTTON_SIZES[size] || BUTTON_SIZES.md,
     className
@@ -186,7 +189,7 @@ export function IconButton({ label, variant = 'secondary', className, children, 
       aria-label={label}
       title={label}
       className={cn(
-        'inline-grid h-10 w-10 shrink-0 place-items-center rounded-full border transition duration-200 active:scale-95 disabled:pointer-events-none disabled:opacity-45',
+        'inline-grid h-10 w-10 shrink-0 place-items-center rounded-lg transition duration-200 active:scale-95 disabled:pointer-events-none disabled:opacity-45',
         BUTTON_VARIANTS[variant] || BUTTON_VARIANTS.secondary,
         className
       )}
@@ -197,11 +200,36 @@ export function IconButton({ label, variant = 'secondary', className, children, 
   );
 }
 
+export function ThemeToggle({ className, size = 'md' }) {
+  const { theme, toggleTheme } = useTheme();
+  const isDark = theme === 'dark';
+  const label = isDark ? 'Switch to light theme' : 'Switch to dark theme';
+
+  return (
+    <button
+      type="button"
+      onClick={toggleTheme}
+      aria-label={label}
+      aria-pressed={!isDark}
+      title={label}
+      className={cn(
+        'glass-pill relative inline-grid shrink-0 place-items-center overflow-hidden rounded-lg text-ink-subtle transition duration-200 hover:text-ink active:scale-95',
+        size === 'sm' ? 'h-8 w-8' : 'h-9 w-9',
+        className
+      )}
+    >
+      <span className="sr-only">{label}</span>
+      <Sun className={cn('absolute transition duration-300', isDark ? 'h-4 w-4 rotate-0 scale-100 opacity-100' : 'h-4 w-4 -rotate-90 scale-50 opacity-0')} />
+      <Moon className={cn('absolute transition duration-300', isDark ? 'h-4 w-4 rotate-90 scale-50 opacity-0' : 'h-4 w-4 rotate-0 scale-100 opacity-100')} />
+    </button>
+  );
+}
+
 export function GlassCard({ as: Component = 'div', interactive = false, className, children, ...props }) {
   return (
     <Component
       className={cn(
-        'glass-panel rounded-[26px]',
+        'glass-panel rounded-xl',
         interactive && 'glass-interactive',
         className
       )}
@@ -218,20 +246,20 @@ export function PageHeader({ eyebrow, title, description, actions, meta, classNa
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
           {eyebrow && (
-            <div className="mb-2 flex items-center gap-2 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-white/50">
+            <div className="mb-2.5 flex items-center gap-2 text-[13px] font-medium uppercase tracking-[0.04em] text-ink-subtle">
               <span className="live-dot is-signal h-1.5 w-1.5 shadow-none" />
               {eyebrow}
             </div>
           )}
-          <h1 className="text-balance text-[30px] font-semibold leading-[1.06] tracking-[-0.045em] text-white sm:text-[34px] lg:text-[36px]">
+          <h1 className="text-balance text-[32px] font-semibold leading-[1.15] tracking-[-0.025em] text-ink sm:text-[36px] lg:text-[40px]">
             {title}
           </h1>
           {description && (
-            <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-white/58 sm:text-sm">
+            <p className="mt-2.5 max-w-2xl text-sm leading-relaxed text-ink-muted">
               {description}
             </p>
           )}
-          {meta && <div className="mt-3 flex flex-wrap items-center gap-2">{meta}</div>}
+          {meta && <div className="mt-3.5 flex flex-wrap items-center gap-2">{meta}</div>}
         </div>
         {actions && (
           <div className={cn('flex flex-wrap items-center gap-2', actionsClassName)}>{actions}</div>
@@ -246,16 +274,16 @@ export function CardHeader({ icon: Icon, eyebrow, title, description, action, cl
     <div className={cn('flex items-start justify-between gap-3', className)}>
       <div className="flex min-w-0 items-start gap-3">
         {Icon && (
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-2xl border border-white/[0.09] bg-white/[0.055] text-white/68 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-white/[0.09] bg-white/[0.055] text-ink-muted shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
             <Icon className="h-4 w-4" />
           </span>
         )}
         <div className="min-w-0">
           {eyebrow && (
-            <p className="font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/46">{eyebrow}</p>
+            <p className="text-[11px] font-medium uppercase tracking-[0.045em] text-ink-subtle">{eyebrow}</p>
           )}
-          <h2 className="text-[14px] font-semibold tracking-[-0.015em] text-white/92 sm:text-[15px]">{title}</h2>
-          {description && <p className="mt-1 text-[11px] leading-relaxed text-white/52">{description}</p>}
+          <h2 className="text-[14px] font-semibold tracking-[-0.015em] text-ink sm:text-[15px]">{title}</h2>
+          {description && <p className="mt-1 text-[11px] leading-relaxed text-ink-subtle">{description}</p>}
         </div>
       </div>
       {action && <div className="shrink-0">{action}</div>}
@@ -286,9 +314,9 @@ export function StatCard({
   return (
     <GlassCard className={cn('relative overflow-hidden p-4 sm:p-5', className)}>
       <div className="flex items-start justify-between gap-3">
-        <p className="font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/48">{label}</p>
+        <p className="text-[11px] font-medium uppercase tracking-[0.045em] text-ink-subtle">{label}</p>
         {Icon && (
-          <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-xl border shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]', STAT_TONES[tone] || STAT_TONES.neutral)}>
+          <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg border shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]', STAT_TONES[tone] || STAT_TONES.neutral)}>
             <Icon className="h-4 w-4" />
           </span>
         )}
@@ -296,15 +324,15 @@ export function StatCard({
       <div className="mt-3 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
         <span className={cn(
           compact
-            ? 'text-[18px] font-semibold leading-tight tracking-[-0.03em] text-white sm:text-[20px]'
-            : 'text-[28px] font-semibold leading-none tracking-[-0.045em] text-white sm:text-[31px]',
+            ? 'text-[18px] font-semibold leading-tight tracking-[-0.03em] text-ink sm:text-[20px]'
+            : 'text-[28px] font-semibold leading-none tracking-[-0.04em] text-ink sm:text-[31px]',
           valueClassName
         )}>
           {value}
         </span>
-        {suffix && <span className="text-[11px] font-medium text-white/54">{suffix}</span>}
+        {suffix && <span className="text-[11px] font-medium text-ink-subtle">{suffix}</span>}
       </div>
-      {hint && <p className="mt-2 line-clamp-2 text-[10px] leading-relaxed text-white/48">{hint}</p>}
+      {hint && <p className="mt-2 line-clamp-2 text-[10px] leading-relaxed text-ink-subtle">{hint}</p>}
     </GlassCard>
   );
 }
@@ -314,10 +342,10 @@ export function Chip({ active = false, className, children, type = 'button', ...
     <button
       type={type}
       className={cn(
-        'inline-flex min-h-9 select-none items-center justify-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[11px] font-semibold transition duration-200 active:scale-[0.97]',
+        'inline-flex min-h-9 select-none items-center justify-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[13px] font-medium transition duration-200 active:scale-[0.97]',
         active
-          ? 'border-white/20 bg-white text-ink-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_8px_24px_-10px_rgba(255,255,255,0.65)]'
-          : 'glass-pill text-white/60 hover:border-white/20 hover:text-white/88',
+          ? 'border-white/[0.16] bg-white/[0.1] text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.14)]'
+          : 'border-transparent bg-transparent text-ink-subtle hover:border-white/[0.12] hover:bg-white/[0.05] hover:text-ink-muted',
         className
       )}
       {...props}
@@ -331,11 +359,11 @@ export function MetaChip({ icon: Icon, children, className }) {
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full border border-white/[0.09] bg-white/[0.045] px-2.5 py-1 font-mono text-[10px] text-white/58 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]',
+        'inline-flex items-center gap-1.5 rounded-md border border-white/[0.09] bg-white/[0.045] px-2.5 py-1 text-[11px] text-ink-subtle shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]',
         className
       )}
     >
-      {Icon && <Icon className="h-3 w-3 text-white/48" />}
+      {Icon && <Icon className="h-3 w-3 text-ink-tertiary" />}
       {children}
     </span>
   );
@@ -344,15 +372,15 @@ export function MetaChip({ icon: Icon, children, className }) {
 export function SearchField({ value, onChange, placeholder = 'Search...', className, inputClassName, ...props }) {
   return (
     <div className={cn('relative', className)}>
-      <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
+      <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-tertiary" />
       <input
         type="text"
         value={value}
         onChange={onChange}
         placeholder={placeholder}
         className={cn(
-          'h-11 w-full rounded-2xl border border-white/[0.1] bg-white/[0.05] pl-10 pr-10 text-[13px] text-white/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] outline-none transition placeholder:text-white/32',
-          'backdrop-blur-xl focus:border-signal-400/55 focus:bg-white/[0.065] focus:ring-4 focus:ring-signal-500/10',
+          'h-11 w-full rounded-lg border border-white/[0.1] bg-surface-1/70 pl-10 pr-10 text-sm text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] outline-none transition backdrop-blur-xl placeholder:text-ink-tertiary',
+          'focus:border-signal-400/55 focus:ring-4 focus:ring-signal-500/10',
           inputClassName
         )}
         {...props}
@@ -362,7 +390,7 @@ export function SearchField({ value, onChange, placeholder = 'Search...', classN
           type="button"
           onClick={() => onChange?.({ target: { value: '' } })}
           aria-label="Clear search"
-          className="absolute right-1.5 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full text-white/38 transition hover:bg-white/[0.08] hover:text-white/80"
+          className="absolute right-1.5 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-lg text-ink-tertiary transition hover:bg-white/[0.08] hover:text-ink"
         >
           <X className="h-3.5 w-3.5" />
         </button>
@@ -384,7 +412,7 @@ export function Meter({ value, max = 100, tone = 'signal', className }) {
     sky: 'bg-gradient-to-r from-sky-300 to-sky-500'
   };
   return (
-    <div className={cn('h-1.5 overflow-hidden rounded-full bg-white/[0.07] shadow-[inset_0_1px_2px_rgba(0,0,0,0.35)]', className)}>
+    <div className={cn('h-1.5 overflow-hidden rounded-full bg-white/[0.07] shadow-[inset_0_1px_2px_var(--meter-groove)]', className)}>
       <div className={cn('h-full rounded-full transition-[width] duration-500', tones[tone] || tones.signal)} style={{ width: `${pct}%` }} />
     </div>
   );
@@ -404,10 +432,10 @@ export function ProgressRing({
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
   const palette = {
-    signal: ['#ffb3c0', '#ff2d55'],
-    emerald: ['#6ee7b7', '#10b981'],
-    amber: ['#fcd34d', '#f59e0b'],
-    sky: ['#7dd3fc', '#0ea5e9']
+    signal: ['#aab2fa', '#5e6ad2'],
+    emerald: ['#34d399', '#059669'],
+    amber: ['#fbbf24', '#d97706'],
+    sky: ['#38bdf8', '#0284c7']
   };
   const [from, to] = palette[tone] || palette.signal;
 
@@ -425,8 +453,8 @@ export function ProgressRing({
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="rgba(255,255,255,0.07)"
           strokeWidth={stroke}
+          style={{ stroke: 'var(--ring-track)' }}
         />
         <circle
           cx={size / 2}
@@ -442,9 +470,9 @@ export function ProgressRing({
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-[22px] font-semibold leading-none tracking-[-0.04em] text-white">{display}</span>
+        <span className="text-[22px] font-semibold leading-none tracking-[-0.04em] text-ink">{display}</span>
         {caption && (
-          <span className="mt-1 text-[9px] font-semibold uppercase tracking-[0.16em] text-white/42">{caption}</span>
+          <span className="mt-1 text-[9px] font-semibold uppercase tracking-[0.16em] text-ink-subtle">{caption}</span>
         )}
       </div>
     </div>
@@ -463,7 +491,7 @@ export function Notice({ tone = 'success', icon: Icon, children, className }) {
   return (
     <div
       role={tone === 'error' ? 'alert' : 'status'}
-      className={cn('flex items-start gap-2.5 rounded-2xl border p-3.5 text-xs leading-relaxed shadow-[inset_0_1px_0_rgba(255,255,255,0.045)] backdrop-blur-xl', tones[tone] || tones.info, className)}
+      className={cn('flex items-start gap-2.5 rounded-xl border p-3.5 text-xs leading-relaxed shadow-[inset_0_1px_0_rgba(255,255,255,0.045)] backdrop-blur-xl', tones[tone] || tones.info, className)}
     >
       <ResolvedIcon className="mt-0.5 h-4 w-4 shrink-0" />
       <div className="min-w-0">{children}</div>
@@ -485,15 +513,15 @@ export function EmptyState({ icon: Icon = Inbox, title, description, action, cla
   return (
     <div
       className={cn(
-        'flex flex-col items-center justify-center rounded-[26px] border border-dashed border-white/12 bg-white/[0.025] px-6 py-12 text-center backdrop-blur-xl',
+        'flex flex-col items-center justify-center rounded-xl border border-dashed border-white/12 bg-white/[0.025] px-6 py-12 text-center backdrop-blur-xl',
         className
       )}
     >
-      <span className="grid h-12 w-12 place-items-center rounded-2xl border border-white/[0.08] bg-white/[0.04] text-white/44">
+      <span className="grid h-12 w-12 place-items-center rounded-xl border border-white/[0.08] bg-white/[0.04] text-ink-tertiary">
         <Icon className="h-5 w-5" />
       </span>
-      <p className="mt-4 text-sm font-semibold text-white/84">{title}</p>
-      {description && <p className="mt-1.5 max-w-sm text-xs leading-relaxed text-white/46">{description}</p>}
+      <p className="mt-4 text-sm font-semibold text-ink">{title}</p>
+      {description && <p className="mt-1.5 max-w-sm text-xs leading-relaxed text-ink-subtle">{description}</p>}
       {action && <div className="mt-5">{action}</div>}
     </div>
   );
@@ -501,12 +529,12 @@ export function EmptyState({ icon: Icon = Inbox, title, description, action, cla
 
 export function LoadingBlock({ label = 'Loading live data...', className }) {
   return (
-    <div className={cn('glass-panel flex min-h-36 flex-col items-center justify-center gap-3 rounded-[26px] p-8 text-center', className)}>
+    <div className={cn('glass-panel flex min-h-36 flex-col items-center justify-center gap-3 rounded-xl p-8 text-center', className)}>
       <span className="relative flex h-8 w-8 items-center justify-center">
         <span className="absolute inset-0 animate-ping rounded-full bg-signal-500/15" />
-        <span className="h-3 w-3 rounded-full bg-signal-400 shadow-[0_0_18px_rgba(255,45,85,0.8)]" />
+        <span className="h-3 w-3 rounded-full bg-signal-400 shadow-[0_0_18px_rgba(94,105,209,0.8)]" />
       </span>
-      <p className="text-xs font-medium text-white/50">{label}</p>
+      <p className="text-xs font-medium text-ink-subtle">{label}</p>
     </div>
   );
 }
@@ -593,7 +621,7 @@ export function BottomSheet({ open, onClose, title, eyebrow, children, footer, c
             transition: dragging ? 'none' : 'transform 260ms cubic-bezier(0.22, 1, 0.36, 1)'
           } : undefined}
           className={cn(
-            'sheet-panel flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-[30px] sm:rounded-[30px]',
+            'sheet-panel flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-3xl sm:rounded-3xl',
             className
           )}
         >
@@ -608,15 +636,15 @@ export function BottomSheet({ open, onClose, title, eyebrow, children, footer, c
           </div>
           <div className="flex items-start justify-between gap-4 px-5 pb-3 pt-2 sm:px-6 sm:pt-5">
             <div className="min-w-0">
-              {eyebrow && <p className="font-mono text-[9px] font-medium uppercase tracking-[0.08em] text-white/46">{eyebrow}</p>}
-              {title && <h2 className="mt-1 text-lg font-semibold tracking-[-0.025em] text-white">{title}</h2>}
+              {eyebrow && <p className="text-[11px] font-medium uppercase tracking-[0.045em] text-ink-subtle">{eyebrow}</p>}
+              {title && <h2 className="mt-1 text-lg font-semibold tracking-[-0.025em] text-ink">{title}</h2>}
             </div>
             <button
               ref={closeRef}
               type="button"
               onClick={onClose}
               aria-label="Close panel"
-              className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/12 bg-white/[0.07] text-white/64 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] transition hover:bg-white/[0.12] hover:text-white active:scale-95"
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-white/12 bg-white/[0.07] text-ink-subtle shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] transition hover:bg-white/[0.12] hover:text-ink active:scale-95"
             >
               <X className="h-4 w-4" />
             </button>
@@ -668,7 +696,7 @@ export function CopyButton({ value, label = 'Copy', compact = false, className }
         aria-label={copied ? `${label} copied` : label}
         title={copied ? 'Copied' : label}
         className={cn(
-          'glass-pill inline-grid h-8 w-8 shrink-0 place-items-center rounded-full text-white/50 transition hover:text-white/90 active:scale-95',
+          'inline-grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-white/[0.12] bg-white/[0.05] text-ink-subtle shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] transition hover:border-white/[0.2] hover:bg-white/[0.09] hover:text-ink active:scale-95',
           className
         )}
       >
