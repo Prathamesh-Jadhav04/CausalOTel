@@ -25,7 +25,7 @@ public class HealthController : ControllerBase
         {
             status = "UP",
             service = "inventory-service",
-            runtime = ".NET 10.0.404",
+            runtime = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
             timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         });
     }
@@ -42,7 +42,9 @@ public class HealthController : ControllerBase
                 {
                     status = "UP",
                     database = "UP",
-                    storage = "DURABLE_SQLITE",
+                    storage = _dbContext.Database.ProviderName?.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) == true
+                        ? "DURABLE_POSTGRESQL"
+                        : "DURABLE_SQLITE",
                     timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                 });
             }

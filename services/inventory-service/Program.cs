@@ -14,8 +14,17 @@ using Microsoft.Extensions.Hosting;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using OpenTelemetry.Exporter;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// The collector exposes OTLP/HTTP on :4318.  The .NET exporter otherwise
+// defaults to gRPC (:4317), so be explicit about both the protocol and the
+// signal-specific endpoint.  A base endpoint is accepted as a convenience,
+// but it is normalized before it reaches the exporter.
+var configuredOtlpEndpoint = builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]
+    ?? "http://localhost:4318";
+var otlpTraceEndpoint = ResolveOtlpTraceEndpoint(configuredOtlpEndpoint);
 
 // 1. Configure OpenTelemetry Tracing & Metrics
 builder.Services.AddOpenTelemetry()
@@ -27,7 +36,8 @@ builder.Services.AddOpenTelemetry()
             .AddHttpClientInstrumentation()
             .AddOtlpExporter(options =>
             {
-                options.Endpoint = new Uri(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"] ?? "http://localhost:4318/v1/traces");
+                options.Protocol = OtlpExportProtocol.HttpProtobuf;
+                options.Endpoint = otlpTraceEndpoint;
             });
     })
     .WithMetrics(metrics =>
@@ -42,10 +52,16 @@ builder.Services.AddOpenTelemetry()
 // In the Testing environment the path must be an explicit temporary database:
 // refusing anything else prevents tests from opening or deleting live data.
 var isTesting = builder.Environment.IsEnvironment("Testing");
+var postgresConnectionString = builder.Configuration["POSTGRES_CONNECTION_STRING"];
+var usePostgres = !string.IsNullOrWhiteSpace(postgresConnectionString);
 var configuredDbPath = builder.Configuration["SQLITE_DB_PATH"];
-string dbPath;
+string? dbPath = null;
 if (isTesting)
 {
+    if (usePostgres)
+    {
+        throw new InvalidOperationException("Testing environment must use an isolated SQLite database.");
+    }
     if (string.IsNullOrWhiteSpace(configuredDbPath))
     {
         throw new InvalidOperationException(
@@ -54,13 +70,13 @@ if (isTesting)
 
     dbPath = Path.GetFullPath(configuredDbPath);
     var tempRoot = Path.GetFullPath(Path.GetTempPath());
-    if (!dbPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase))
+    if (!IsPathWithin(dbPath, tempRoot))
     {
         throw new InvalidOperationException(
             $"Refusing to run tests against a non-temporary database: {dbPath}");
     }
 }
-else
+else if (!usePostgres)
 {
     var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
     var dataDir = Path.Combine(localAppData, "CausalOTel", "data");
@@ -68,13 +84,44 @@ else
     dbPath = configuredDbPath ?? Path.Combine(dataDir, "inventory.db");
 }
 
-// Build SQLite Connection String with DefaultTimeout = 5s (5000ms busy_timeout)
-var connectionString = new SqliteConnectionStringBuilder
+static Uri ResolveOtlpTraceEndpoint(string configuredEndpoint)
 {
-    DataSource = dbPath,
-    Mode = SqliteOpenMode.ReadWriteCreate,
-    DefaultTimeout = 5
-}.ToString();
+    if (!Uri.TryCreate(configuredEndpoint, UriKind.Absolute, out var endpoint)
+        || (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps))
+    {
+        throw new InvalidOperationException(
+            "OTEL_EXPORTER_OTLP_ENDPOINT must be an absolute HTTP or HTTPS URI.");
+    }
+
+    // AddOtlpExporter uses an endpoint as-is.  The OTLP/HTTP trace path is
+    // required when callers configure the common base URL rather than a
+    // signal-specific URL.
+    if (endpoint.AbsolutePath is "" or "/")
+    {
+        return new Uri(endpoint.ToString().TrimEnd('/') + "/v1/traces");
+    }
+
+    return endpoint;
+}
+
+static bool IsPathWithin(string path, string root)
+{
+    var normalizedRoot = Path.GetFullPath(root)
+        .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+        + Path.DirectorySeparatorChar;
+    return Path.GetFullPath(path)
+        .StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
+}
+
+// Build SQLite Connection String with DefaultTimeout = 5s (5000ms busy_timeout)
+var connectionString = usePostgres
+    ? postgresConnectionString!
+    : new SqliteConnectionStringBuilder
+    {
+        DataSource = dbPath,
+        Mode = SqliteOpenMode.ReadWriteCreate,
+        DefaultTimeout = 5
+    }.ToString();
 
 builder.Services.AddSingleton<SqlitePragmaConnectionInterceptor>();
 builder.Services.AddSingleton<InventoryFaultState>();
@@ -95,9 +142,16 @@ if (!isTesting)
 
 builder.Services.AddDbContext<InventoryDbContext>((sp, options) =>
 {
-    var interceptor = sp.GetRequiredService<SqlitePragmaConnectionInterceptor>();
-    options.UseSqlite(connectionString)
-           .AddInterceptors(interceptor);
+    if (usePostgres)
+    {
+        options.UseNpgsql(connectionString);
+    }
+    else
+    {
+        var interceptor = sp.GetRequiredService<SqlitePragmaConnectionInterceptor>();
+        options.UseSqlite(connectionString)
+               .AddInterceptors(interceptor);
+    }
 });
 
 // 3. Register RFC 9457 Global Exception Handler
@@ -120,10 +174,11 @@ app.UseAuthorization();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
-    var conn = db.Database.GetDbConnection();
-    conn.Open();
-    using (var cmd = conn.CreateCommand())
+    if (!usePostgres)
     {
+        var conn = db.Database.GetDbConnection();
+        conn.Open();
+        using var cmd = conn.CreateCommand();
         cmd.CommandText = "PRAGMA journal_mode = WAL; PRAGMA page_size = 4096;";
         cmd.ExecuteNonQuery();
     }
@@ -132,8 +187,10 @@ using (var scope = app.Services.CreateScope())
     // H-04 schema upgrade for databases created before the unique constraint.
     // EnsureCreated() does not alter an existing table, so add the canonical
     // request hash column and the unique (OrderId, Sku) index explicitly.
-    using (var schemaCmd = conn.CreateCommand())
+    if (!usePostgres)
     {
+        var conn = db.Database.GetDbConnection();
+        using var schemaCmd = conn.CreateCommand();
         schemaCmd.CommandText = "PRAGMA table_info(stock_reservations)";
         bool hasRequestHash = false;
         using (var reader = schemaCmd.ExecuteReader())

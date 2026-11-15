@@ -1,0 +1,19 @@
+{$DOMAIN} {
+    encode zstd gzip
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    @api path /api/*
+    handle /api/auth/* { reverse_proxy user-service:8081 }
+    handle /api/users/* { reverse_proxy user-service:8081 }
+    handle /api/products/* { reverse_proxy product-service:8082 }
+    handle /api/orders/* { reverse_proxy order-service:8083 }
+    handle /api/payments/* { reverse_proxy payment-service:8084 }
+    handle /api/inventory/* { reverse_proxy inventory-service:5050 }
+    handle /api/analysis/* { reverse_proxy analysis-engine:5000 }
+    handle { root * /usr/share/caddy; try_files {path} /index.html; file_server }
+}

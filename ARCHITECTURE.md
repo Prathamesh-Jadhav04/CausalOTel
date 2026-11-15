@@ -3,8 +3,8 @@
 > **Current architecture after remediation (2026-11-13).** The original audit baseline was
 > `a10bf0b` (2026-11-11). Sections 1–6 describe the runtime shape and data model, updated where the
 > remediation changed them. Sections 7–12 describe the current telemetry, security, frontend,
-> operations, and status. The only unresolved finding is **L-04** (native C++ core), which is
-> **BLOCKED** by the absence of CMake/C++ tooling. Full finding statuses and evidence are in
+> operations, and status. The C++ core now builds with MSVC; Device Guard on this managed host
+> blocks execution of locally built executables. Full finding statuses and evidence are in
 > [`AUDIT_REPORT.md`](AUDIT_REPORT.md) §10; run/test context is in
 > [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md).
 
@@ -44,7 +44,7 @@ flowchart TB
     TEMPO["Grafana Tempo<br/>:3200 HTTP / :4320 OTLP"]
     PROM["Prometheus<br/>:9090"]
     MONGO["MongoDB<br/>:27017"]
-    NATIVE["C++ sweep_line binary<br/>not built"]
+    NATIVE["C++ sweep_line binary<br/>builds; execution allowlisted by policy"]
   end
 
   subgraph Data["Storage"]
@@ -567,7 +567,7 @@ The analysis engine never substitutes synthetic data on the real path:
 
 ### 7.2 Trace and graph flow
 
-1. Java services and the analysis engine export OTLP spans to the Collector.
+1. Every backend service and the analysis engine export OTLP spans to the Collector.
 2. The Collector batches spans to Tempo and exposes its own metrics to Prometheus.
 3. The analysis engine lists recent traces with a window, fetches details with bounded
    concurrency (default 5), and computes self-time and RCA evidence. The trace list can be
@@ -675,7 +675,7 @@ flowchart LR
 | Tarjan graph algorithm | IMPLEMENTED / VERIFIED | Unit tests |
 | Runtime graph endpoint | IMPLEMENTED / VERIFIED | Tempo-derived, filtered, bounded concurrency |
 | JS sweep-line | IMPLEMENTED / VERIFIED | Tested fallback |
-| C++ sweep-line | **BLOCKED** | No CMake/compiler; explicit `NOT BUILT` status |
+| C++ sweep-line | PARTIALLY VERIFIED | MSVC binaries build; Device Guard blocks execution on this host |
 | Tempo integration | IMPLEMENTED / VERIFIED | Real spans, typed errors |
 | Prometheus integration | IMPLEMENTED / VERIFIED | Real metrics, typed errors |
 | Incident persistence | IMPLEMENTED / VERIFIED | Durable disk spool |
@@ -683,7 +683,7 @@ flowchart LR
 | Dashboard incidents/RCA | IMPLEMENTED / VERIFIED | Real contracts |
 | Dashboard traces | IMPLEMENTED / VERIFIED | Real Tempo data |
 | Dashboard metrics | IMPLEMENTED / VERIFIED | Real Prometheus data |
-| OTel export | IMPLEMENTED / VERIFIED | Java + analysis; inventory metrics only |
+| OTel export | IMPLEMENTED / VERIFIED | Java, inventory, and analysis engine export OTLP |
 | Authentication/authorization | IMPLEMENTED / VERIFIED | All business/fault APIs |
 | MongoDB | NOT USED | Removed from readiness/storage path |
 
@@ -692,10 +692,10 @@ flowchart LR
 1. **Local demo, not production.** SQLite, local processes, no TLS, no horizontal scaling, no
    secrets manager, no deployment manifests.
 2. **Payment is simulated.** No real transactions; simulation is profile-gated and off by default.
-3. **Native C++ path is unverified.** The JS fallback is active; L-04 is blocked by the missing
-   toolchain.
-4. **Inventory is not traced in Tempo.** It is visible to Prometheus and health probes but does not
-   emit OTLP spans in this build.
+3. **Native C++ execution requires allowlisting.** The JS fallback is active while Device Guard
+   blocks locally built executables on this managed host.
+4. **Inventory tracing depends on the Collector.** It exports OTLP/HTTP spans when the local
+   collector is available and always exposes Prometheus metrics and health probes.
 5. **Long-lived local databases may contain historical rows** from earlier runs; they are not
    fixtures.
 6. **The dashboard is an operator demo**, not a hardened multi-tenant console.

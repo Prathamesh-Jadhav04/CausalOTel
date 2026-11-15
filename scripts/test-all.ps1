@@ -22,6 +22,9 @@ $root = Resolve-Path "$PSScriptRoot\.."
 if (Test-Path "C:\Program Files\dotnet") {
     $env:PATH = "C:\Program Files\dotnet;$env:PATH"
 }
+# The .NET CLI telemetry identity reads the registry, which managed hosts may deny.
+# Builds and tests do not need telemetry, so make orchestration reliable by disabling it.
+$env:DOTNET_CLI_TELEMETRY_OPTOUT = "1"
 
 $realLocalAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
 $liveDataDir = Join-Path $realLocalAppData "CausalOTel\data"
@@ -39,8 +42,12 @@ function Get-LiveDatabaseFingerprint {
     foreach ($name in @("user.db", "product.db", "order.db", "payment.db", "inventory.db")) {
         $path = Join-Path $DataDirectory $name
         if (Test-Path $path) {
-            $file = Get-Item -LiteralPath $path
-            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+            try {
+                $file = Get-Item -LiteralPath $path -ErrorAction Stop
+                $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash
+            } catch {
+                throw "Unable to fingerprint live database '$path'. Stop the running mesh before testing. $($_.Exception.Message)"
+            }
             $fingerprint[$name] = "$hash|$($file.Length)|$($file.LastWriteTimeUtc.Ticks)"
         } else {
             $fingerprint[$name] = "ABSENT"
@@ -56,10 +63,14 @@ function Get-LiveSpoolFingerprint {
         return "ABSENT"
     }
 
-    $entries = Get-ChildItem -LiteralPath $SpoolDirectory -File -ErrorAction SilentlyContinue |
+    $entries = Get-ChildItem -LiteralPath $SpoolDirectory -File -ErrorAction Stop |
         Sort-Object Name |
         ForEach-Object {
-            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+            try {
+                $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256 -ErrorAction Stop).Hash
+            } catch {
+                throw "Unable to fingerprint live incident spool '$($_.FullName)'. Stop the running mesh before testing. $($_.Exception.Message)"
+            }
             "$($_.Name)|$($_.Length)|$hash"
         }
     return ($entries -join ";")
@@ -171,8 +182,8 @@ try {
         & ".\mvnw.cmd" test
     }
 
-    # 5. Inventory Service (.NET 10)
-    Run-Suite -Name "Inventory Service (.NET 10 LTS)" -Directory (Join-Path $root "services\inventory-service\InventoryService.Tests") -DatabaseFile "inventory.db" -Command {
+    # 5. Inventory Service (.NET 11)
+    Run-Suite -Name "Inventory Service (.NET 11)" -Directory (Join-Path $root "services\inventory-service\InventoryService.Tests") -DatabaseFile "inventory.db" -Command {
         & dotnet test --verbosity normal
     }
 

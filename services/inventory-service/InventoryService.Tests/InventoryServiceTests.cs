@@ -59,7 +59,7 @@ public class InventoryServiceTests : IClassFixture<WebApplicationFactory<Program
     {
         var fullPath = Path.GetFullPath(path);
         var tempRoot = Path.GetFullPath(Path.GetTempPath());
-        if (!fullPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase))
+        if (!IsPathWithin(fullPath, tempRoot))
         {
             throw new InvalidOperationException(
                 $"Refusing destructive test cleanup outside the temp directory: {fullPath}");
@@ -68,11 +68,20 @@ public class InventoryServiceTests : IClassFixture<WebApplicationFactory<Program
         var liveData = Path.GetFullPath(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "CausalOTel", "data"));
-        if (fullPath.StartsWith(liveData, StringComparison.OrdinalIgnoreCase))
+        if (IsPathWithin(fullPath, liveData))
         {
             throw new InvalidOperationException(
                 $"Refusing destructive test cleanup against live CausalOTel data: {fullPath}");
         }
+    }
+
+    private static bool IsPathWithin(string path, string root)
+    {
+        var normalizedRoot = Path.GetFullPath(root)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        var normalizedPath = Path.GetFullPath(path);
+        return normalizedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -2,7 +2,8 @@
 
 > **Current state after remediation (2026-11-13).** The original audit baseline was commit
 > `a10bf0ba238ccc038901f9c772c3958b956fa015` (2026-11-11). All 34 audit findings were
-> remediated except **L-04**, which is **BLOCKED** by the absence of CMake/C++ tooling.
+> remediated. The native C++ binaries now build; Device Guard on this managed host
+> blocks execution of locally built executables and the xUnit runner.
 > See [`AUDIT_REPORT.md`](AUDIT_REPORT.md) §10 for per-finding status and evidence, and
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for the current topology.
 
@@ -26,7 +27,7 @@ root-cause-analysis (RCA) dashboard attached:
 - Five business services model users, products, orders, payments, and inventory.
 - The order service implements a saga: reserve inventory, charge payment, commit inventory, with
   compensation, leases, an outbox, and reconciliation.
-- Java services and the analysis engine emit OpenTelemetry traces to a native Collector/Tempo stack.
+- All backend services and the analysis engine emit OpenTelemetry traces to a native Collector/Tempo stack.
 - Prometheus scrapes real service metrics.
 - The analysis engine reads traces from Tempo, computes span self-time with a sweep-line
   interval-union algorithm, derives a service graph from parent/child spans, and ranks a likely
@@ -41,11 +42,11 @@ and profile-gated. See §10 for limitations.
 | Layer | Technology | Version observed |
 |---|---|---|
 | Java services | Java / Spring Boot 4.0.0, Maven Wrapper | Java `25.0.5`; Spring Boot `4.0.0` |
-| .NET service | ASP.NET Core, EF Core, SQLite, OpenTelemetry | .NET SDK `10.0.404` |
+| .NET service | ASP.NET Core, EF Core, SQLite, OpenTelemetry | .NET SDK `11.0.100` |
 | Analysis engine | Node.js, Express 5, prom-client | Node `v26.13.0` |
 | Dashboard | React 19, React Router 7, Vite 6, Tailwind 4, Axios | Vite `6.4.6`; React `^19.0.0` |
 | Databases | SQLite (WAL mode) per service | Files under `%LOCALAPPDATA%\CausalOTel\data` |
-| Native core | C++20, CMake | Source present; **CMake/compiler absent**; binary not built |
+| Native core | C++20, CMake, MSVC | Binaries build; execution requires Device Guard allowlisting |
 | Observability | otelcol-contrib, Tempo, Prometheus | `0.165.0`, `3.1.1`, `3.16.0` |
 | Scripting | Windows PowerShell 5.1 | Windows host |
 | Test runners | JUnit 5 / Mockito, xUnit, `node:test`, Vite build | See §7 |
@@ -62,7 +63,7 @@ CausalOTel/
 │  └─ inventory-service/   .NET, :5050, inventory.db, reservation state machine
 ├─ analysis-engine/        Node, :5000, Tempo/Prometheus clients, RCA, graph, spool
 ├─ dashboard/              React/Vite, :3000, authenticated operator UI
-├─ cpp-core/               C++20 sweep-line source (unbuilt; JS fallback active)
+├─ cpp-core/               C++20 sweep-line source (JS fallback active when native execution is unavailable)
 ├─ observability/          Collector, Prometheus, Tempo configs
 ├─ scripts/                install/start/stop/verify/build/test/demo PowerShell scripts
 ├─ tools/observability/    Downloaded native binaries (gitignored)
@@ -79,7 +80,7 @@ CausalOTel/
 
 - Windows with PowerShell 5.1 or newer.
 - Java 25 and the Maven Wrapper in each Java service.
-- .NET 10 SDK on `PATH` (scripts prepend `C:\Program Files\dotnet` if present).
+- .NET 11 SDK on `PATH` (scripts prepend `C:\Program Files\dotnet` if present).
 - Node.js 26 with `npm.cmd` (use `npm.cmd`; `npm.ps1` may be blocked by execution policy).
 - Optional: CMake + a C++20 compiler for `cpp-core`.
 - Free ports: `3000`, `5000`, `5050`, `8081`–`8084`, `3200`, `4317`, `4318`, `4320`, `8889`,
@@ -180,7 +181,7 @@ SQLite files open and write to them continuously.
 | Analysis | `npm.cmd test` | PASS — 73 tests |
 | Dashboard contracts | `npm.cmd test` | PASS — 27 tests |
 | Dashboard build | `npm.cmd run build` | PASS |
-| C++ core | CMake build | **SKIP** — CMake/compiler absent |
+| C++ core | MSVC build | PASS — execution blocked by Device Guard on this host |
 
 `build-all.ps1` runs the suites plus dashboard production build and exits nonzero on any failure.
 `test-all.ps1` runs the seven isolated suites and prints live-database/spool integrity.
@@ -198,7 +199,7 @@ SQLite files open and write to them continuously.
 | Checkout demo | `demo-checkout-rca.ps1` 60/60 checks; fault 504, `PENDING_RECONCILIATION`, `RECONCILIATION_REQUIRED`, `RECONCILE_PAYMENT` pending, inventory preserved, reconcile to `CONFIRMED` |
 | Payment safety | Simulation disabled by default; explicit demo/test profile required; `503` when disabled |
 | Test isolation | 7/7 suites PASS; live DBs and spool `UNCHANGED` |
-| Residual non-audit warnings | Inventory `dotnet test` passes 21/21 with NuGet `NU1902`/`NU1903` warnings for `OpenTelemetry.Exporter.OpenTelemetryProtocol 1.11.2`, `System.Security.Cryptography.Pkcs 9.0.0`, and `SQLitePCLRaw.lib.e_sqlite3 2.1.11`; outside the 34 findings and not remediated in this pass. |
+| Dependency scan | `dotnet list package --vulnerable --include-transitive` reports no vulnerable packages after the .NET 11 / EF Core 11 upgrade. |
 
 ## 9. Capability status
 
@@ -214,13 +215,13 @@ Labels: **IMPLEMENTED / VERIFIED**, **PARTIALLY IMPLEMENTED**, **BLOCKED**.
 | Inventory reserve/commit/release | IMPLEMENTED / VERIFIED | Unique `(OrderId, Sku)`, request hash, state machine |
 | Compensation and reconciliation | IMPLEMENTED / VERIFIED | Leases, backoff, refund escalation, late-commit handling |
 | Public API authentication/authorization | IMPLEMENTED / VERIFIED | All business/fault APIs |
-| OTel tracing from services | IMPLEMENTED / VERIFIED | Java + analysis; inventory metrics/health only |
+| OTel tracing from services | IMPLEMENTED / VERIFIED | Java, inventory, and analysis engine export OTLP |
 | Tempo-backed real trace analysis | IMPLEMENTED / VERIFIED | Real spans; typed errors; no synthetic fallback |
 | Prometheus-backed metrics | IMPLEMENTED / VERIFIED | Real PromQL; typed 503 on outage |
 | Incident persistence | IMPLEMENTED / VERIFIED | Durable disk spool; restart hydration |
 | Tarjan SCC graph algorithm | IMPLEMENTED / VERIFIED | Unit tests |
 | Runtime graph endpoint | IMPLEMENTED / VERIFIED | Tempo-derived; `rootName` TraceQL filter plus defensive check; bounded concurrency |
-| Sweep-line self-time (native) | **BLOCKED** | C++ source present; no compiler; JS fallback verified |
+| Sweep-line self-time (native) | PARTIALLY VERIFIED | MSVC binaries build; Device Guard blocks local execution on this host |
 | Sweep-line self-time (JS fallback) | IMPLEMENTED / VERIFIED | Sweep-line tests |
 | RCA heuristic scoring | IMPLEMENTED / VERIFIED | Real traces only; synthetic rejected |
 | Dashboard RCA/incidents | IMPLEMENTED / VERIFIED | Real contracts; no mock fallback |
@@ -235,8 +236,8 @@ Labels: **IMPLEMENTED / VERIFIED**, **PARTIALLY IMPLEMENTED**, **BLOCKED**.
 |---|---|
 | Deployment | Local demo only; SQLite, local processes, no TLS, no horizontal scaling, no secrets manager |
 | Payments | Simulated; no real transactions; profile-gated and off by default |
-| Native core | L-04 blocked; JS fallback active; explicit `NOT BUILT` status |
-| Tracing coverage | Inventory does not emit OTLP spans in this build; it is visible to Prometheus and health probes |
+| Native core | Builds locally; JS fallback remains active until Device Guard allowlists execution |
+| Tracing coverage | Inventory exports OTLP/HTTP spans to the Collector and also exposes Prometheus metrics and health probes |
 | Data | Long-lived local databases may contain historical rows from earlier runs; not fixtures |
 | Dashboard | Operator demo, not a hardened multi-tenant console |
 | Analysis engine | Single process; local cache; disk spool is the durable source of truth |

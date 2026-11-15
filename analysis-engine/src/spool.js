@@ -1,13 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 const INCIDENT_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 
 export class SpoolValidationError extends Error {
-    constructor(message, code = 'INVALID_INCIDENT_ID') {
+    constructor(message, code = 'INVALID_INCIDENT_ID', status = 400) {
         super(message);
         this.name = 'SpoolValidationError';
-        this.status = 400;
+        this.status = status;
         this.code = code;
     }
 }
@@ -54,7 +55,14 @@ export class IncidentSpool {
             : path.resolve('./spool/incidents');
 
         this.spoolDir = path.resolve(options.spoolDir || process.env.SPOOL_DIR || defaultBase);
-        this.maxSizeBytes = options.maxSizeBytes || parseInt(process.env.SPOOL_MAX_SIZE_BYTES, 10) || 500 * 1024 * 1024; // 500 MB
+        const configuredMaxSize = options.maxSizeBytes ?? parseInt(process.env.SPOOL_MAX_SIZE_BYTES, 10);
+        this.maxSizeBytes = Number.isSafeInteger(configuredMaxSize) && configuredMaxSize > 0
+            ? configuredMaxSize
+            : 500 * 1024 * 1024; // 500 MB
+        // Quota enforcement and file creation must be one critical section.
+        // Without this queue, concurrent callers can all observe enough free
+        // space and collectively write past the configured cap.
+        this._writeQueue = Promise.resolve();
 
         this._ensureDirSync();
     }
@@ -111,6 +119,13 @@ export class IncidentSpool {
      * If cap is reached, deletes oldest files (FIFO eviction).
      */
     async _enforceQuota(incomingBytes) {
+        if (incomingBytes > this.maxSizeBytes) {
+            throw new SpoolValidationError(
+                `incident payload (${incomingBytes} bytes) exceeds the ${this.maxSizeBytes}-byte spool quota`,
+                'SPOOL_ITEM_TOO_LARGE',
+                413
+            );
+        }
         const currentSize = await this.getSpoolSizeBytes();
         if (currentSize + incomingBytes <= this.maxSizeBytes) {
             return;
@@ -119,7 +134,6 @@ export class IncidentSpool {
         const files = await fs.promises.readdir(this.spoolDir);
         const fileStats = [];
         for (const file of files) {
-            if (file.endsWith('.tmp')) continue; // Skip in-flight tmp files
             try {
                 const filePath = path.join(this.spoolDir, file);
                 const stat = await fs.promises.stat(filePath);
@@ -146,6 +160,24 @@ export class IncidentSpool {
                 // Continue evicting next
             }
         }
+
+        if (currentSize - freed + incomingBytes > this.maxSizeBytes) {
+            throw new Error('Unable to free enough disk space for the incident spool quota');
+        }
+    }
+
+    _enqueueWrite(operation) {
+        const run = this._writeQueue.then(operation, operation);
+        // Keep the queue usable after a rejected write while returning the
+        // original rejection to the caller that triggered it.
+        this._writeQueue = run.catch(() => undefined);
+        return run;
+    }
+
+    async _existingIncidentPath(incidentId) {
+        const suffix = `_${incidentId}.json`;
+        const files = await this.listPending();
+        return files.find(file => path.basename(file).endsWith(suffix)) || null;
     }
 
     /**
@@ -158,35 +190,49 @@ export class IncidentSpool {
     async spoolIncident(incidentId, data) {
         const safeIncidentId = validateIncidentId(incidentId);
 
-        const payload = JSON.stringify({
-            incidentId: safeIncidentId,
-            spooledAt: Date.now(),
-            data
-        }, null, 2);
-
-        const payloadBytes = Buffer.byteLength(payload, 'utf8');
-        await this._enforceQuota(payloadBytes);
-
-        const timestamp = Date.now();
-        const baseName = `${timestamp}_${path.basename(safeIncidentId)}`;
-        const tmpPath = this._containedPath(path.join(this.spoolDir, `${baseName}.tmp`));
-        const targetPath = this._containedPath(path.join(this.spoolDir, `${baseName}.json`), { requireJson: true });
-
-        try {
-            await fs.promises.writeFile(tmpPath, payload, 'utf8');
-            await fs.promises.rename(tmpPath, targetPath);
-            return targetPath;
-        } catch (err) {
-            // Clean up temporary file on failure
-            try {
-                if (fs.existsSync(tmpPath)) {
-                    await fs.promises.unlink(tmpPath);
-                }
-            } catch (cleanupErr) {
-                // Ignore cleanup error
+        return this._enqueueWrite(async () => {
+            // Preserve idempotency when the same incident is retried while a
+            // previous write is queued or has already completed.
+            const existing = await this._existingIncidentPath(safeIncidentId);
+            if (existing) {
+                return existing;
             }
-            throw new Error(`Failed to spool incident ${safeIncidentId}: ${err.message}`);
-        }
+
+            const payload = JSON.stringify({
+                incidentId: safeIncidentId,
+                spooledAt: Date.now(),
+                data
+            }, null, 2);
+
+            const payloadBytes = Buffer.byteLength(payload, 'utf8');
+            await this._enforceQuota(payloadBytes);
+
+            const timestamp = Date.now();
+            const baseName = `${timestamp}_${path.basename(safeIncidentId)}`;
+            const tmpPath = this._containedPath(
+                path.join(this.spoolDir, `${baseName}.${crypto.randomUUID()}.tmp`)
+            );
+            const targetPath = this._containedPath(
+                path.join(this.spoolDir, `${baseName}.json`),
+                { requireJson: true }
+            );
+
+            try {
+                await fs.promises.writeFile(tmpPath, payload, { encoding: 'utf8', flag: 'wx' });
+                await fs.promises.rename(tmpPath, targetPath);
+                return targetPath;
+            } catch (err) {
+                // Clean up temporary file on failure.
+                try {
+                    if (fs.existsSync(tmpPath)) {
+                        await fs.promises.unlink(tmpPath);
+                    }
+                } catch {
+                    // The original write error is more useful to the caller.
+                }
+                throw new Error(`Failed to spool incident ${safeIncidentId}: ${err.message}`);
+            }
+        });
     }
 
     /**

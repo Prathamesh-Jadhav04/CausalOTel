@@ -44,6 +44,7 @@ if (Test-Path $pidFile) {
 if (Test-Path "C:\Program Files\dotnet") {
     $env:PATH = "C:\Program Files\dotnet;$env:PATH"
 }
+$env:DOTNET_CLI_TELEMETRY_OPTOUT = "1"
 
 function Write-StepResult {
     param([string]$Name, [string]$Status, [string]$Detail)
@@ -115,7 +116,7 @@ foreach ($svc in $javaServices) {
     }
 }
 
-Write-Host "`n--> Building Inventory Service [C# / .NET 10 LTS]..." -ForegroundColor Yellow
+Write-Host "`n--> Building Inventory Service [C# / .NET 11]..." -ForegroundColor Yellow
 $invDir = Join-Path $root "services\inventory-service"
 Push-Location $invDir
 try {

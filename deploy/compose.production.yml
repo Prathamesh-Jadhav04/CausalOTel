@@ -1,0 +1,221 @@
+name: causalotel
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  networks: [backend]
+  security_opt: [no-new-privileges:true]
+  read_only: true
+  tmpfs: [/tmp]
+  environment:
+    SPRING_PROFILES_ACTIVE: production
+    AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:?set in deploy/.env.production}
+    OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    networks: [backend]
+    security_opt: [no-new-privileges:true]
+    environment:
+      POSTGRES_USER: causalotel
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in deploy/.env.production}
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/00-create-databases.sh:/docker-entrypoint-initdb.d/00-create-databases.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U causalotel -d postgres]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  user-service:
+    <<: *service-defaults
+    build:
+      context: ..
+      dockerfile: deploy/docker/java-service.Dockerfile
+      args: { SERVICE: user-service }
+    environment:
+      SPRING_PROFILES_ACTIVE: production
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:?set in deploy/.env.production}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      DB_HOST: postgres
+      USER_DB_PASSWORD: ${POSTGRES_PASSWORD:?set in deploy/.env.production}
+    depends_on: { postgres: { condition: service_healthy } }
+    healthcheck:
+      test: [CMD-SHELL, curl -fsS http://localhost:8081/health/live >/dev/null]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+
+  product-service:
+    <<: *service-defaults
+    build:
+      context: ..
+      dockerfile: deploy/docker/java-service.Dockerfile
+      args: { SERVICE: product-service }
+    environment:
+      SPRING_PROFILES_ACTIVE: production
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:?set in deploy/.env.production}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      DB_HOST: postgres
+      PRODUCT_DB_PASSWORD: ${POSTGRES_PASSWORD:?set in deploy/.env.production}
+    depends_on: { postgres: { condition: service_healthy } }
+    healthcheck:
+      test: [CMD-SHELL, curl -fsS http://localhost:8082/health/live >/dev/null]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+
+  payment-service:
+    <<: *service-defaults
+    build:
+      context: ..
+      dockerfile: deploy/docker/java-service.Dockerfile
+      args: { SERVICE: payment-service }
+    environment:
+      SPRING_PROFILES_ACTIVE: production
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:?set in deploy/.env.production}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      DB_HOST: postgres
+      PAYMENT_DB_PASSWORD: ${POSTGRES_PASSWORD:?set in deploy/.env.production}
+      PAYMENT_SIMULATION_ENABLED: "false"
+    depends_on: { postgres: { condition: service_healthy } }
+    healthcheck:
+      test: [CMD-SHELL, curl -fsS http://localhost:8084/health/live >/dev/null]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+
+  inventory-service:
+    <<: *service-defaults
+    build:
+      context: ..
+      dockerfile: deploy/docker/inventory.Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:?set in deploy/.env.production}
+      POSTGRES_CONNECTION_STRING: Host=postgres;Port=5432;Database=causalotel_inventory;Username=causalotel;Password=${POSTGRES_PASSWORD:?set in deploy/.env.production};Ssl Mode=Disable
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      SERVICES_PAYMENT_URL: http://payment-service:8084
+      CAUSALOTEL_FAULT_INJECTION_ENABLED: "false"
+    depends_on: { postgres: { condition: service_healthy } }
+    healthcheck:
+      test: [CMD-SHELL, curl -fsS http://localhost:5050/health/live >/dev/null]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+
+  order-service:
+    <<: *service-defaults
+    build:
+      context: ..
+      dockerfile: deploy/docker/java-service.Dockerfile
+      args: { SERVICE: order-service }
+    environment:
+      SPRING_PROFILES_ACTIVE: production
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:?set in deploy/.env.production}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      DB_HOST: postgres
+      ORDER_DB_PASSWORD: ${POSTGRES_PASSWORD:?set in deploy/.env.production}
+      SERVICES_PAYMENT_URL: http://payment-service:8084
+      SERVICES_PRODUCT_URL: http://product-service:8082
+      SERVICES_INVENTORY_URL: http://inventory-service:5050
+    depends_on:
+      postgres: { condition: service_healthy }
+      product-service: { condition: service_healthy }
+      payment-service: { condition: service_healthy }
+      inventory-service: { condition: service_healthy }
+    healthcheck:
+      test: [CMD-SHELL, curl -fsS http://localhost:8083/health/live >/dev/null]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+
+  analysis-engine:
+    restart: unless-stopped
+    build: { context: .., dockerfile: deploy/docker/analysis.Dockerfile }
+    networks: [backend]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      SPOOL_DIR: /var/lib/causalotel/incidents
+      TEMPO_URL: ${TEMPO_URL:-http://tempo:3200}
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://prometheus:9090}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      SERVICES_USER_URL: http://user-service:8081
+      SERVICES_PRODUCT_URL: http://product-service:8082
+      SERVICES_ORDER_URL: http://order-service:8083
+      SERVICES_PAYMENT_URL: http://payment-service:8084
+      SERVICES_INVENTORY_URL: http://inventory-service:5050
+      SERVICES_ANALYSIS_URL: http://analysis-engine:5000
+    volumes: [analysis-spool:/var/lib/causalotel/incidents]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:5000/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+
+  tempo:
+    image: grafana/tempo:3.1.1
+    restart: unless-stopped
+    networks: [backend]
+    security_opt: [no-new-privileges:true]
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.113.0
+    restart: unless-stopped
+    networks: [backend]
+    security_opt: [no-new-privileges:true]
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes: ["./observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro"]
+    depends_on: { tempo: { condition: service_started } }
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    restart: unless-stopped
+    networks: [backend]
+    security_opt: [no-new-privileges:true]
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  dashboard:
+    restart: unless-stopped
+    build: { context: .., dockerfile: deploy/docker/dashboard.Dockerfile }
+    networks: [backend]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      dashboard: { condition: service_started }
+    networks: [edge, backend]
+    ports: ["80:80", "443:443"]
+    environment: { DOMAIN: ${DOMAIN:?set a public DNS name} }
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+networks:
+  edge:
+  backend: { internal: true }
+volumes:
+  postgres-data:
+  analysis-spool:
+  tempo-data:
+  prometheus-data:
+  caddy-data:
+  caddy-config:

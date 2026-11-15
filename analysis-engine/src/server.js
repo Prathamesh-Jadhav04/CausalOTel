@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import client from 'prom-client';
-import { trace } from '@opentelemetry/api';
+import { createRequire } from 'node:module';
 import { IncidentSpool } from './spool.js';
 import { TempoClient } from './tempo_client.js';
 import { PrometheusClient } from './prometheus_client.js';
@@ -10,6 +10,13 @@ import { IncidentStore } from './incident_store.js';
 import { ServiceGraphService } from './service_graph.js';
 import { ServiceHealthProbe } from './service_probe.js';
 import { nativeCoreStatus } from './native_core.js';
+
+// The current OpenTelemetry packages publish dual CJS/ESM exports. Node 26's
+// ESM resolver does not yet handle their nested `default` condition, while
+// the package-supported CommonJS condition resolves correctly.  Keep this
+// application ESM and load only the telemetry boundary through that condition.
+const require = createRequire(import.meta.url);
+const { trace } = require('@opentelemetry/api');
 
 const app = express();
 const port = parseInt(process.env.PORT, 10) || 5000;
@@ -334,6 +341,7 @@ app.use((err, req, res, next) => {
         403: 'Forbidden',
         404: 'Not Found',
         409: 'Conflict',
+        413: 'Payload Too Large',
         502: 'Bad Gateway',
         503: 'Service Unavailable'
     };

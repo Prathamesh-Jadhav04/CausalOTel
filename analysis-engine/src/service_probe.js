@@ -6,13 +6,24 @@
  * and reports explicit UP / DOWN / UNREACHABLE states with measured latency.
  */
 
+const service = (name, url, fallback, healthPath = '/health/live') => {
+    const resolvedUrl = url || fallback;
+    const parsed = new URL(resolvedUrl);
+    return {
+        name,
+        url: resolvedUrl,
+        port: parsed.port ? Number(parsed.port) : (parsed.protocol === 'https:' ? 443 : 80),
+        healthPath
+    };
+};
+
 const DEFAULT_SERVICES = [
-    { name: 'user-service', port: 8081, healthPath: '/health/live' },
-    { name: 'product-service', port: 8082, healthPath: '/health/live' },
-    { name: 'order-service', port: 8083, healthPath: '/health/live' },
-    { name: 'payment-service', port: 8084, healthPath: '/health/live' },
-    { name: 'inventory-service', port: 5050, healthPath: '/health/live' },
-    { name: 'analysis-engine', port: 5000, healthPath: '/health/live' }
+    service('user-service', process.env.SERVICES_USER_URL, 'http://127.0.0.1:8081'),
+    service('product-service', process.env.SERVICES_PRODUCT_URL, 'http://127.0.0.1:8082'),
+    service('order-service', process.env.SERVICES_ORDER_URL, 'http://127.0.0.1:8083'),
+    service('payment-service', process.env.SERVICES_PAYMENT_URL, 'http://127.0.0.1:8084'),
+    service('inventory-service', process.env.SERVICES_INVENTORY_URL, 'http://127.0.0.1:5050'),
+    service('analysis-engine', process.env.SERVICES_ANALYSIS_URL, 'http://127.0.0.1:5000')
 ];
 
 export class ServiceHealthProbe {
@@ -24,7 +35,7 @@ export class ServiceHealthProbe {
     async probe(service) {
         const startedAt = performance.now();
         try {
-            const response = await fetch(`http://127.0.0.1:${service.port}${service.healthPath}`, {
+            const response = await fetch(`${service.url}${service.healthPath}`, {
                 headers: { Accept: 'application/json' },
                 signal: AbortSignal.timeout(this.timeoutMs)
             });
@@ -40,6 +51,7 @@ export class ServiceHealthProbe {
             const healthy = response.ok && (!body || body.status === 'UP' || body.status === 'ok');
             return {
                 name: service.name,
+                url: service.url,
                 port: service.port,
                 status: healthy ? 'UP' : 'DOWN',
                 httpStatus: response.status,
@@ -51,6 +63,7 @@ export class ServiceHealthProbe {
             const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError';
             return {
                 name: service.name,
+                url: service.url,
                 port: service.port,
                 status: 'UNREACHABLE',
                 httpStatus: null,

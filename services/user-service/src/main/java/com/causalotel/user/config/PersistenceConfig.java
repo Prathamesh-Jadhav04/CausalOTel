@@ -21,6 +21,10 @@ public class PersistenceConfig {
 
     @PostConstruct
     public void initializeDatabasePragmas() {
+        if (!datasourceUrl.startsWith("jdbc:sqlite:")) {
+            log.info("Using non-SQLite datasource; skipping SQLite PRAGMA initialization");
+            return;
+        }
         try {
             // Ensure parent directory exists
             String dbPath = datasourceUrl.replace("jdbc:sqlite:", "");
