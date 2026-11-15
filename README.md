@@ -10,10 +10,10 @@ telemetry used by RCA comes from real spans and metrics emitted by the running
 services. When a backend is unavailable, the system reports an explicit degraded or
 unavailable state; it does not fabricate traces, metrics, incidents, or RCA results.
 
-> **Honest status:** 33 of the 34 findings in [`AUDIT_REPORT.md`](AUDIT_REPORT.md) are
-> `FIXED AND VERIFIED`. The remaining finding, **L-04 (native C++ core)**, is
-> `BLOCKED` because this machine has no CMake or C++ compiler. The JavaScript
-> sweep-line fallback is active and tested; the native binary is not built.
+> **Honest status:** The application code and dependency remediation are complete.
+> The native C++ binaries now build with MSVC, but this managed Windows host blocks
+> their execution (and `dotnet test`) under Device Guard. The JavaScript fallback
+> remains active and fully tested.
 
 ---
 
@@ -40,7 +40,7 @@ unavailable state; it does not fabricate traces, metrics, incidents, or RCA resu
           | W3C traceparent + OTLP
           |
   user :8081  product :8082  order :8083  payment :8084  inventory :5050
-   (Java 25 / Spring Boot 4)                              (.NET 10)
+   (Java 25 / Spring Boot 4)                              (.NET 11)
 ```
 
 ### Services
@@ -51,14 +51,13 @@ unavailable state; it does not fabricate traces, metrics, incidents, or RCA resu
 | product-service | Java 25 / Spring Boot 4 | 8082 | Catalog and authoritative prices |
 | order-service | Java 25 / Spring Boot 4 | 8083 | Checkout saga, idempotency, outbox, reconciliation |
 | payment-service | Java 25 / Spring Boot 4 | 8084 | Simulated charge/refund, admin-only fault injection |
-| inventory-service | C# / ASP.NET Core 10 | 5050 | Reservation state machine, commit/release, expiry worker |
+| inventory-service | C# / ASP.NET Core 11 | 5050 | Reservation state machine, commit/release, expiry worker |
 | analysis-engine | Node.js 26 / Express | 5000 | Tempo/Prometheus clients, RCA, graph, incident store |
 | dashboard | React 19 / Vite / Tailwind | 3000 | Authenticated operator UI |
 
-Every Java service and the analysis engine export OTLP spans to the collector. The
-inventory service exposes Prometheus metrics and health endpoints; it does not emit
-OTLP spans in this build. The dashboard is a browser client and does not emit
-telemetry.
+Every backend service, including inventory, and the analysis engine export OTLP
+spans to the collector. Inventory also exposes Prometheus metrics and health
+endpoints. The dashboard is a browser client and does not emit telemetry.
 
 ---
 
@@ -66,12 +65,11 @@ telemetry.
 
 - Windows 10/11 with PowerShell 5.1 or newer.
 - **Java 25** and the Maven Wrapper (`mvnw.cmd`) in each Java service.
-- **.NET 10 SDK** on `PATH`.
+- **.NET 11 SDK** on `PATH`.
 - **Node.js 26** with `npm.cmd` (the `npm.ps1` shim may be blocked by execution policy).
 - Free ports: `3000`, `5000`, `5050`, `8081`–`8084`, `3200`, `4317`, `4318`, `4320`,
   `8889`, `9090`, `13133`.
-- Optional: CMake + a C++20 compiler for the native sweep-line core (not installed
-  in the verification environment).
+- Optional: CMake + a C++20 compiler for local native-core development.
 
 No Docker, Kubernetes, WSL2, Redis, Kafka, or RabbitMQ is required or used.
 
@@ -242,17 +240,16 @@ is durably spooled. If Tempo or Prometheus is unavailable, the API returns typed
 
 ---
 
-## Native C++ core (L-04: BLOCKED)
+## Native C++ core
 
-The C++20 sweep-line interval-union core is present under `cpp-core/`, but this
-environment has no CMake and no C++ compiler (`cl`, `g++`, `clang++`, `msbuild`, and
-`ninja` are all absent). The binary is therefore **not built or verified**.
+The C++20 sweep-line interval-union core is present under `cpp-core/` and builds to
+`cpp-core/build/sweep_line.exe`. Its independent test binary also builds.
 
-- The analysis engine uses the tested JavaScript fallback.
-- `GET /api/analysis/native-core` reports `available: false`, the exact expected
-  binary paths it checked, and the build command.
-- `build-all.ps1` reports `cpp-core SKIP` and does not claim a successful native build.
-- The dashboard Settings page displays `NOT BUILT` rather than a fake path.
+- The analysis engine uses the tested JavaScript fallback whenever the native binary
+  is absent or cannot execute.
+- This managed host blocks newly built executables under Device Guard, so the native
+  executable cannot be runtime-verified here until an administrator allowlists the
+  signed binary or its publisher.
 
 To verify the native path on a machine with the toolchain:
 
@@ -293,16 +290,16 @@ edges with `failedTraceCount=0` and `degraded=false`.
 - **Local demo only.** SQLite databases, local processes, no TLS, no horizontal
   scaling, no secrets manager, no production deployment manifests.
 - **Payment is simulated.** No real transactions are performed.
-- **Native C++ path is unverified** in this environment (see L-04).
-- **Inventory does not emit OTLP spans.** It is visible to Prometheus and the health
-  probe but not as a traced service in Tempo.
+- **Native C++ execution is blocked by Device Guard** on this host; the tested JS
+  fallback is used until a signed binary is allowlisted.
+- **Inventory tracing depends on the local collector.** When it is unavailable,
+  inventory continues serving requests but its OTLP spans cannot reach Tempo.
 - **The dashboard is an operator demo**, not a hardened multi-tenant console.
 - **Historical rows may exist** in a long-lived local database from earlier runs;
   they are not fixtures.
-- **NuGet warnings remain** for three inventory-service dependencies
-  (`OpenTelemetry.Exporter.OpenTelemetryProtocol 1.11.2`,
-  `System.Security.Cryptography.Pkcs 9.0.0`, `SQLitePCLRaw.lib.e_sqlite3 2.1.11`).
-  They are outside the 34 audit findings and were not upgraded in this pass.
+- **Managed-host execution policy.** Device Guard blocks the xUnit runner and locally
+  built native executables. An administrator must allowlist the trusted, signed
+  publisher or deployment path; application code cannot safely bypass this policy.
 
 ---
 

@@ -13,6 +13,7 @@ High-performance native interval union module for CausalOTel distributed trace l
 ```bash
 cmake -B build -S .
 cmake --build build --config Release
+ctest --test-dir build --build-config Release --output-on-failure
 ```
 Outputs `build/Release/sweep_line.exe` or `build/sweep_line`.
 

@@ -232,7 +232,7 @@ $userJar = Join-Path $root "services\user-service\target\user-service-1.0.0-SNAP
 $prodJar = Join-Path $root "services\product-service\target\product-service-1.0.0-SNAPSHOT.jar"
 $orderJar = Join-Path $root "services\order-service\target\order-service-1.0.0-SNAPSHOT.jar"
 $payJar = Join-Path $root "services\payment-service\target\payment-service-1.0.0-SNAPSHOT.jar"
-$invDll = Join-Path $root "services\inventory-service\bin\Release\net10.0\InventoryService.dll"
+$invDll = Join-Path $root "services\inventory-service\bin\Release\net11.0\InventoryService.dll"
 
 foreach ($artifact in @(
     @{ Service = "user-service"; Path = $userJar },

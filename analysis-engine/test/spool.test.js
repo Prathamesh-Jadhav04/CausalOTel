@@ -102,6 +102,29 @@ describe('IncidentSpool Tests', () => {
         // Oldest incident (inc-evict-1) should have been evicted to respect the cap
         assert.equal(fs.existsSync(path1), false, 'Oldest incident should have been evicted');
         assert.equal(fs.existsSync(path3), true, 'Newest incident must remain intact');
+        assert.ok(await cappedSpool.getSpoolSizeBytes() <= 400, 'quota must remain bounded');
+    });
+
+    test('Rejects an incident that cannot fit inside the configured quota', async () => {
+        const cappedSpool = new IncidentSpool({ spoolDir: testSpoolDir, maxSizeBytes: 100 });
+
+        await assert.rejects(
+            cappedSpool.spoolIncident('inc-too-large', { pad: 'X'.repeat(500) }),
+            err => err instanceof SpoolValidationError
+                && err.status === 413
+                && err.code === 'SPOOL_ITEM_TOO_LARGE'
+        );
+
+        assert.deepEqual((await fs.promises.readdir(testSpoolDir)).filter(file => file.endsWith('.json')), []);
+    });
+
+    test('Serializes concurrent writes so the quota is never exceeded', async () => {
+        const cappedSpool = new IncidentSpool({ spoolDir: testSpoolDir, maxSizeBytes: 350 });
+        await Promise.all(Array.from({ length: 10 }, (_, i) =>
+            cappedSpool.spoolIncident(`inc-concurrent-${i}`, { pad: String(i).repeat(50) })
+        ));
+
+        assert.ok(await cappedSpool.getSpoolSizeBytes() <= 350, 'concurrent writes must respect quota');
     });
 
     test('Acknowledge incident unlinks file cleanly', async () => {
